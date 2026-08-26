@@ -25,15 +25,29 @@ def _build_filters() -> EventFilters:
     col1, col2 = st.columns(2)
     with col1:
         st.caption("Sender")
-        from_equals = st.text_input("From equals", key="f_from_equals", placeholder="alerts@example.com")
-        from_not_equals = st.text_input("From not equals", key="f_from_not_equals", placeholder="noreply@spammy-domain.com")
+        from_op_col, from_value_col = st.columns([1, 2])
+        with from_op_col:
+            from_operator = st.selectbox("Operator", ["equals", "not equals"], key="f_from_operator")
+        with from_value_col:
+            from_value = st.text_input("From", key="f_from_value", placeholder="alerts@example.com")
         domain_contains = st.text_input("Sender domain contains", key="f_domain_contains", placeholder="example.com")
         domain_not_contains = st.text_input("Sender domain not contains", key="f_domain_not_contains", placeholder="mailgun.org")
     with col2:
         st.caption("Recipient & subject")
-        to_equals = st.text_input("To equals (exact address)", key="f_to_equals", placeholder="jane.doe@example.com")
-        to_contains = st.text_input("To contains", key="f_to_contains", placeholder="@example.com")
+        to_op_col, to_value_col = st.columns([1, 2])
+        with to_op_col:
+            to_operator = st.selectbox("Operator", ["equals", "contains"], key="f_to_operator")
+        with to_value_col:
+            to_value = st.text_input("To", key="f_to_value", placeholder="jane.doe@example.com")
         subject_contains = st.text_input("Subject contains", key="f_subject_contains", placeholder="invoice")
+
+    from_equals = from_value if from_operator == "equals" else ""
+    from_not_equals = from_value if from_operator == "not equals" else ""
+    # "equals" maps to Mailgun's native `recipient` param (see filters.py) —
+    # only true when the value is used that way, so switching the operator
+    # to "contains" doesn't silently keep sending it server-side.
+    to_equals = to_value if to_operator == "equals" else ""
+    to_contains = to_value if to_operator == "contains" else ""
 
     st.caption("Status & date range")
     col3, col4, col5 = st.columns([2, 1, 1])
@@ -84,11 +98,10 @@ def render() -> None:
 
     spec = _build_filters()
 
-    default_columns = st.session_state.get("events_columns") or DEFAULT_COLUMNS
     columns = st.multiselect(
         "Columns",
         list(COLUMN_OPTIONS.keys()),
-        default=default_columns,
+        default=DEFAULT_COLUMNS,
         key="events_columns",
         format_func=lambda c: f"{c} — {COLUMN_OPTIONS[c]}",
     )

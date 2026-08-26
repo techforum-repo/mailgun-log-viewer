@@ -21,7 +21,16 @@ CUSTOM_CSS = """<style>
 
 DEFAULT_STATE = {
     "events_rows": None,
-    "events_columns": None,
+    # events_columns is deliberately NOT pre-populated here: it's a widget
+    # key (the Columns multiselect in events_page.py) with its own
+    # `default=`. Pre-setting it to any value — None included — makes
+    # Streamlit use that stored value instead of the widget's `default=` on
+    # first render; None specifically crashes the widget outright
+    # ("'NoneType' object is not iterable") since a multiselect's backing
+    # value must be a list. Leaving the key absent lets `default=` apply
+    # normally the first time, same as every other filter widget on that
+    # page.
+    #
     # Fixed per session so repeated "Fetch" clicks in mock mode return a
     # stable dataset instead of reshuffling on every rerun.
     "mock_seed": 20260826,
