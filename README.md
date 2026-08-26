@@ -3,9 +3,9 @@
 A small Streamlit app for querying Mailgun's [Events API](https://documentation.mailgun.com/en/latest/api-events.html)
 across every domain on your account at once, with filters Mailgun itself
 doesn't support server-side (sender not-equals, sender-domain not-contains,
-subject contains, ...), and picking exactly the columns you want in the
-result — e.g. `@timestamp`, `message.headers.from`, `message.headers.subject`,
-`message.headers.to`.
+subject contains, multi-value OR matches, ...), timezone-aware date ranges,
+and picking exactly the columns you want in the result — e.g. `@timestamp`,
+`message.headers.from`, `message.headers.subject`, `message.headers.to`.
 
 ## Quick start
 
@@ -26,6 +26,7 @@ MOCK_MODE=false
 MAILGUN_API_KEY=<your private API key>
 MAILGUN_DOMAINS=mail.example.com
 MAILGUN_REGION=us            # or eu — see below
+REPORT_TIMEZONE=America/Chicago  # default for the Events page's date-range timezone — see below
 ```
 
 and restart. See `.env.example` for every field, commented.
@@ -58,6 +59,15 @@ equals". Only the operator actually chosen determines which underlying
 filter fires; e.g. switching To's operator from "equals" to "contains"
 stops sending `recipient=` server-side and starts filtering locally instead.
 
+Each of those three fields also accepts **more than one value** —
+comma-separate them (`alerts@example.com, billing@example.com`) and they're
+OR'd together: "From equals" matches if the sender is *any* of them, "To
+equals" fires one native `recipient=` call per address and merges the
+results (Mailgun's API takes exactly one recipient per call), and "Sender
+domain contains" matches if the domain contains *any* of the listed values.
+The same OR logic applies to the "not equals"/"not contains" side —
+excluded if it matches *any* of them.
+
 This means a very wide date range combined with only local filters can pull
 (and discard) a lot of events before you see the ones you actually wanted —
 narrow the date range or status first if a query feels slow. One "Fetch"
@@ -79,6 +89,28 @@ unswapped against the descending default gets rejected by Mailgun as
 `Inconsistent range`. `filters.py`'s `_native_params()` swaps them for you
 based on `ascending` so the UI's "From date"/"To date" can stay in the
 plain older→newer order no matter which direction you're sorting.
+
+## Date filters are timezone-aware, not just UTC
+
+The Events page's date range includes a **Timezone** picker (defaults to
+`REPORT_TIMEZONE` in `.env`, "America/Chicago" out of the box). "From date"
+and "To date" are calendar days in *that* zone, not UTC — picking the same
+date for both gives you exactly that one 24-hour day. Behind the scenes this
+uses Python's stdlib `zoneinfo` (`utils.to_utc()`/`utils.local_now()`, no
+extra dependency) to convert to the correct UTC window before querying
+Mailgun or filtering mock data, which correctly handles the twice-a-year
+DST switch — Central midnight is `05:00 UTC` under CDT but `06:00 UTC` under
+CST, and a fixed offset would get half the year wrong. The page always shows
+the computed UTC window in a caption so you can verify exactly what's being
+sent.
+
+This is independent of two other timezone-shaped settings that are easy to
+conflate with it: `MAILGUN_REGION` (which Mailgun *API* to call, US vs EU —
+see below) and whatever display-timezone your Mailgun account's own
+dashboard is set to (that's cosmetic to Mailgun's web UI only; this app
+never reads it, so a report built here can show a given event at a
+different clock time than Mailgun's own dashboard does if your account's
+dashboard timezone differs from `REPORT_TIMEZONE`).
 
 ## Every configured domain is queried together
 
@@ -124,7 +156,8 @@ mailgun_log_viewer/
   errors.py        friendly_error() — exception -> title + plausible causes
   retry.py         call_with_retry() — retries only what friendly_error() says is transient
   logging_setup.py Rotating file logger under logs/ (Streamlit only prints to stdout)
-  filters.py       EventFilters, native-vs-local query splitting, column extraction
+  filters.py       EventFilters (multi-value OR filters), native-vs-local query splitting, column extraction
+  utils.py         to_utc()/local_now() (zoneinfo-based timezone conversion), parse_list(), CSV/log sanitization
   clients/
     base.py        Shared HTTP plumbing: request pacing, error normalization
     events.py      Mailgun Events API client (pagination via `paging.next`)
@@ -146,7 +179,7 @@ python -m pyflakes mailgun_log_viewer app.py tests
 ```
 
 Tests run entirely against pure logic (`filters.py`, `errors.py`, `retry.py`,
-`config.py`) — no network access, no Streamlit runtime needed.
+`config.py`, `utils.py`) — no network access, no Streamlit runtime needed.
 
 ## Security notes
 
