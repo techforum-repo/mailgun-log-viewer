@@ -27,3 +27,7 @@ def test_base_url_defaults_to_us_for_unknown_region():
 
 def test_base_url_region_is_case_insensitive():
     assert Settings(mailgun_region="EU").mailgun_base_url == "https://api.eu.mailgun.net/v3"
+
+
+def test_report_timezone_defaults_to_central():
+    assert Settings().report_timezone == "America/Chicago"

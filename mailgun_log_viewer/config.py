@@ -37,9 +37,9 @@ class Settings(BaseSettings):
     # Private API key from Settings -> API Keys in the Mailgun dashboard.
     # Sent as HTTP Basic Auth ("api", this key) — see auth.py.
     mailgun_api_key: str = ""
-    # Comma-separated sending domain(s) this app can query events for, e.g.
-    # "mail.example.com,updates.example.com". The first is the default
-    # selected in the UI; the sidebar lets a session switch among the rest.
+    # Comma-separated sending domain(s) this app queries — every one of them
+    # is fetched and merged on every "Fetch" click (see ui/shared.py's
+    # query_domains()), e.g. "mail.example.com,updates.example.com".
     mailgun_domains: str = ""
     # "us" or "eu" — Mailgun's two API regions use entirely different base
     # URLs and a domain only exists in the one it was created in. Get this
@@ -47,6 +47,16 @@ class Settings(BaseSettings):
     # identical to a bad key — see errors.py's guidance for that exact
     # ambiguity.
     mailgun_region: str = "us"
+
+    # IANA timezone the Events page's date-range picker is interpreted in —
+    # NOT the same as MAILGUN_REGION above (that's which Mailgun API to
+    # hit) and NOT the same as whatever display timezone your Mailgun
+    # account's own dashboard is set to (that's cosmetic to Mailgun's web
+    # UI only, and this app never reads it). This purely controls what "the
+    # 26th" means when picked in the Events page: midnight-to-midnight in
+    # this zone, converted to UTC (via utils.to_utc, DST-aware) before
+    # being sent to Mailgun or compared against event timestamps.
+    report_timezone: str = "America/Chicago"
 
     http_timeout: float = 30.0
     # Mailgun doesn't publish one universal per-key rate limit; this is a

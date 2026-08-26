@@ -5,18 +5,23 @@ from datetime import datetime, time, timedelta, timezone
 import streamlit as st
 
 from .. import filters as filters_module
-from ..config import LOG_RETENTION_DAYS
+from ..config import LOG_RETENTION_DAYS, settings
 from ..filters import COLUMN_OPTIONS, DEFAULT_COLUMNS, EVENT_TYPES, EventFilters
-from ..utils import run_async, safe_csv
+from ..utils import local_now, run_async, safe_csv, to_utc
 from .shared import fetch_button, query_domains, render_friendly_error
 
+# A curated shortlist for the timezone picker, not an exhaustive IANA list —
+# settings.report_timezone (whatever .env sets, default "America/Chicago")
+# is always included even if it's not one of these, so a custom zone in
+# .env still shows up as the pre-selected option.
+_COMMON_TIMEZONES = ["America/Chicago", "UTC", "America/New_York", "America/Denver", "America/Los_Angeles", "Europe/London"]
 
-def _default_begin() -> datetime:
-    # Pre-filled to the account's actual retention window (see
-    # config.LOG_RETENTION_DAYS) rather than an arbitrary "last 7 days" —
-    # picking an earlier date wouldn't error, it would just silently return
-    # nothing beyond what Mailgun still has.
-    return datetime.now(timezone.utc) - timedelta(days=LOG_RETENTION_DAYS)
+
+def _timezone_options() -> list[str]:
+    options = list(_COMMON_TIMEZONES)
+    if settings.report_timezone not in options:
+        options.insert(0, settings.report_timezone)
+    return options
 
 
 def _build_filters() -> EventFilters:
@@ -55,18 +60,29 @@ def _build_filters() -> EventFilters:
     to_contains = to_value if to_operator == "contains" else ""
 
     st.caption("Status & date range")
-    col3, col4, col5 = st.columns([2, 1, 1])
+    tz_options = _timezone_options()
+    col3, col4, col5, col6 = st.columns([2, 1, 1, 1.2])
     with col3:
         statuses = st.multiselect("Status", EVENT_TYPES, default=["delivered"], key="f_statuses")
+    with col6:
+        tz_name = st.selectbox("Timezone", tz_options, index=tz_options.index(settings.report_timezone), key="f_timezone")
     with col4:
-        begin_date = st.date_input("From date (UTC)", value=_default_begin().date(), key="f_begin_date")
+        begin_date = st.date_input(
+            "From date", value=(local_now(tz_name) - timedelta(days=LOG_RETENTION_DAYS)).date(), key="f_begin_date"
+        )
     with col5:
-        end_date = st.date_input("To date (UTC)", value=datetime.now(timezone.utc).date(), key="f_end_date")
+        end_date = st.date_input("To date", value=local_now(tz_name).date(), key="f_end_date")
     ascending = st.checkbox("Oldest first", key="f_ascending", value=False)
 
-    begin_dt = datetime.combine(begin_date, time.min, tzinfo=timezone.utc)
-    end_dt = datetime.combine(end_date, time.max, tzinfo=timezone.utc)
-    if begin_dt < _default_begin() - timedelta(days=1):
+    # Both dates picked above are calendar days in `tz_name`, not UTC —
+    # Central midnight (say) is 05:00 or 06:00 UTC depending on whether
+    # CDT or CST is in effect, so this can't just tack on tzinfo=UTC. See
+    # utils.to_utc's docstring for why zoneinfo (not a fixed offset)
+    # handles that DST switch correctly.
+    begin_dt = to_utc(datetime.combine(begin_date, time.min), tz_name)
+    end_dt = to_utc(datetime.combine(end_date, time.max), tz_name)
+    st.caption(f"Querying UTC window: {begin_dt.strftime('%Y-%m-%d %H:%M')} → {end_dt.strftime('%Y-%m-%d %H:%M')} UTC")
+    if begin_dt < datetime.now(timezone.utc) - timedelta(days=LOG_RETENTION_DAYS + 1):
         st.caption(f"⚠️ Mailgun retains roughly the last {LOG_RETENTION_DAYS} days of events — results before then will be empty regardless of this filter.")
 
     return EventFilters(

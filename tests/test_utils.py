@@ -1,4 +1,6 @@
-from mailgun_log_viewer.utils import extract_domain, extract_email_address, get_path, sanitize_csv_cell
+from datetime import datetime, timezone
+
+from mailgun_log_viewer.utils import extract_domain, extract_email_address, get_path, local_now, sanitize_csv_cell, to_utc
 
 
 def test_extract_email_address_with_display_name():
@@ -40,3 +42,34 @@ def test_sanitize_csv_cell_neutralizes_formula_prefix():
 
 def test_sanitize_csv_cell_leaves_normal_text():
     assert sanitize_csv_cell("Weekly digest") == "Weekly digest"
+
+
+def test_to_utc_handles_daylight_saving_offset():
+    """Aug 26 is inside US Central daylight saving (CDT, UTC-5) — midnight
+    Central should land on 05:00 UTC, not 06:00."""
+    midnight_central = datetime(2026, 8, 26, 0, 0, 0)
+    assert to_utc(midnight_central, "America/Chicago") == datetime(2026, 8, 26, 5, 0, 0, tzinfo=timezone.utc)
+
+
+def test_to_utc_handles_standard_time_offset():
+    """Jan 15 is outside daylight saving (CST, UTC-6) — this is the whole
+    point of using zoneinfo instead of a fixed offset: the same "midnight
+    Central" wall-clock time converts differently depending on the date."""
+    midnight_central = datetime(2026, 1, 15, 0, 0, 0)
+    assert to_utc(midnight_central, "America/Chicago") == datetime(2026, 1, 15, 6, 0, 0, tzinfo=timezone.utc)
+
+
+def test_to_utc_falls_back_to_utc_for_unknown_zone():
+    naive = datetime(2026, 8, 26, 12, 0, 0)
+    assert to_utc(naive, "Not/A_Real_Zone") == naive.replace(tzinfo=timezone.utc)
+
+
+def test_local_now_falls_back_to_utc_for_unknown_zone():
+    result = local_now("Not/A_Real_Zone")
+    assert result.tzinfo == timezone.utc
+
+
+def test_local_now_returns_aware_datetime_for_valid_zone():
+    result = local_now("America/Chicago")
+    assert result.tzinfo is not None
+    assert result.utcoffset() is not None

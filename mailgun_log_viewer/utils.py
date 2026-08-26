@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Coroutine, TypeVar
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pandas as pd
 
@@ -88,6 +90,41 @@ def safe_csv(df: pd.DataFrame, *, index: bool = False) -> bytes:
         if sanitized[column].dtype == object:
             sanitized[column] = sanitized[column].map(sanitize_csv_cell)
     return sanitized.to_csv(index=index).encode("utf-8-sig")
+
+
+def local_now(tz_name: str) -> datetime:
+    """The current time in the given IANA zone — same fallback-to-UTC
+    behavior as to_utc(), for the Events page's date pickers to default to
+    "today" in whatever timezone the user has selected rather than UTC's
+    today (which can be a different calendar date near midnight)."""
+    try:
+        tz = ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        tz = timezone.utc
+    return datetime.now(tz)
+
+
+def to_utc(local_dt: datetime, tz_name: str) -> datetime:
+    """Interpret a naive datetime as wall-clock time in the given IANA zone
+    (e.g. "America/Chicago") and convert it to a UTC-aware datetime.
+
+    Exists because Mailgun's Events API and this app's internal EventFilters
+    are always UTC, but a calendar day in Central time isn't a calendar day
+    in UTC — Central midnight is 05:00 or 06:00 UTC depending on whether
+    CDT or CST is in effect. Using zoneinfo (stdlib, no extra dependency)
+    instead of a fixed offset means that DST switch is handled correctly
+    without this app needing to track when it happens.
+
+    Falls back to treating `local_dt` as already UTC if `tz_name` isn't a
+    recognized IANA zone (e.g. a typo in .env) — better than crashing the
+    Events page over a bad timezone string, at the cost of silently not
+    doing the conversion; the Settings page shows the configured value so a
+    typo is visible there."""
+    try:
+        tz = ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        tz = timezone.utc
+    return local_dt.replace(tzinfo=tz).astimezone(timezone.utc)
 
 
 def harden_file_permissions(path: Path, *, mode: int = 0o600) -> None:

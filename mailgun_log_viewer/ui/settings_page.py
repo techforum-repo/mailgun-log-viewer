@@ -24,6 +24,13 @@ def render() -> None:
         st.metric("Configured", "Yes" if settings.mailgun_configured else "No")
         st.metric("Retention assumption", f"{LOG_RETENTION_DAYS} days")
 
+    st.text_input(
+        "Default report timezone", value=settings.report_timezone, disabled=True,
+        help="Default for the Events page's date-range timezone picker (overridable per-session there). "
+             "Not the same as Region above, and not your Mailgun dashboard's own display timezone setting "
+             "(that's cosmetic to Mailgun's web UI and unrelated to this app).",
+    )
+
     st.text_input("API key", value=_mask(settings.mailgun_api_key), disabled=True)
     st.text_input("Base URL", value=settings.mailgun_base_url, disabled=True)
     st.text_area("Configured domains", value="\n".join(settings.domain_list) or "(none)", disabled=True, height=80)
