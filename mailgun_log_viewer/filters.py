@@ -66,12 +66,18 @@ class EventFilters:
     ascending: bool = False
 
     # Sender — no native Mailgun filter; always applied client-side against
-    # message.headers.from. Each is a list so multiple addresses/domains
-    # can be checked at once with OR semantics: from_equals matches if the
-    # sender is *any* of these; from_not_equals excludes if it's *any* of
-    # these (equivalent to "not equal to every one of them").
+    # message.headers.from. Each is a list so multiple addresses can be
+    # checked at once with OR semantics: from_equals matches if the sender
+    # is *any* of these; from_not_equals excludes if it's *any* of these
+    # (equivalent to "not equal to every one of them"). equals/not_equals
+    # match the bare address (extract_email_address); contains/not_contains
+    # match the raw header text instead (so a partial address fragment or
+    # display-name text both work), same equals-vs-contains header-vs-
+    # address distinction as the Recipient fields below.
     from_equals: list[str] = field(default_factory=list)
     from_not_equals: list[str] = field(default_factory=list)
+    from_contains: list[str] = field(default_factory=list)
+    from_not_contains: list[str] = field(default_factory=list)
     domain_contains: list[str] = field(default_factory=list)
     domain_not_contains: list[str] = field(default_factory=list)
 
@@ -134,6 +140,8 @@ def _passes_client_filters(event: dict[str, Any], filters: EventFilters) -> bool
 
     from_equals = {v.strip().lower() for v in filters.from_equals if v.strip()}
     from_not_equals = {v.strip().lower() for v in filters.from_not_equals if v.strip()}
+    from_contains = [v.strip().lower() for v in filters.from_contains if v.strip()]
+    from_not_contains = [v.strip().lower() for v in filters.from_not_contains if v.strip()]
     domain_contains = [v.strip().lower() for v in filters.domain_contains if v.strip()]
     domain_not_contains = [v.strip().lower() for v in filters.domain_not_contains if v.strip()]
     to_not_equals = {v.strip().lower() for v in filters.to_not_equals if v.strip()}
@@ -143,6 +151,11 @@ def _passes_client_filters(event: dict[str, Any], filters: EventFilters) -> bool
     if from_equals and from_addr not in from_equals:
         return False
     if from_not_equals and from_addr in from_not_equals:
+        return False
+    raw_from = str(from_header or "").lower()
+    if from_contains and not any(v in raw_from for v in from_contains):
+        return False
+    if from_not_contains and any(v in raw_from for v in from_not_contains):
         return False
     if domain_contains and not any(v in domain for v in domain_contains):
         return False

@@ -48,18 +48,30 @@ client-side against whatever came back:
 | Status | Mailgun (`event=`) — one call per selected status |
 | Date range | Mailgun (`begin=`/`end=`) |
 | To — equals | Mailgun (`recipient=`, exact match) — one call per address |
-| From — equals / not equals | Local, after fetching |
+| From — equals / not equals / contains / not contains | Local, after fetching |
+| To — not equals / contains / not contains | Local, after fetching |
 | Sender domain — contains / not contains | Local, after fetching |
 | Subject contains | Local, after fetching |
-| To — not equals / contains / not contains | Local, after fetching |
 
-From, Sender domain, and To are each a single value field plus an operator
-dropdown next to it — one field, not four separate boxes. Only the operator
-actually chosen determines which underlying filter fires; e.g. switching
-To's operator away from "equals" (to "not equals", "contains", or "not
-contains") stops sending `recipient=` server-side and starts filtering
-locally instead — "equals" is the only one of To's four operators Mailgun
-has any native support for.
+From and To share the same four operators (equals / not equals / contains /
+not contains) and the same layout: one value field plus an operator
+dropdown next to it, not four separate boxes. "equals"/"not equals" match
+the bare address; "contains"/"not contains" match the raw header text
+instead, so they also catch a display-name fragment (e.g. "Acme" for
+`Acme Billing <billing@acme-mail.com>`), not just an address substring.
+Only the operator actually chosen determines which filter fires — e.g.
+switching To's operator away from "equals" stops sending `recipient=`
+server-side and starts filtering locally instead, since "equals" is the
+only one of the four with any native Mailgun support.
+
+Sender domain only ever needs contains/not-contains (an exact "domain
+equals" would just duplicate "From equals" restricted to one domain), and
+Subject only ever needs "contains" (free text has no meaningful "equals").
+Both are deliberately left off the four-operator pattern above rather than
+padded out to match it — Subject in particular gets **its own row** below
+the Sender/Recipient columns for exactly this reason: sharing a row or a
+caption with To's operator dropdown made it look like that operator
+applied to Subject too, which it never has.
 
 Each of those three fields also accepts **more than one value** —
 comma-separate them (`alerts@example.com, billing@example.com`) and they're

@@ -88,6 +88,25 @@ def test_passes_client_filters_from_not_equals_multiple_excludes_any_match():
     assert _passes_client_filters(SAMPLE_EVENT, filters) is False
 
 
+def test_passes_client_filters_from_contains_matches_display_name_too():
+    """Unlike from_equals/from_not_equals (bare address), from_contains
+    matches the raw header text — so it also catches display-name text,
+    e.g. "Acme" here, not just an address fragment."""
+    filters = EventFilters(from_contains=["Acme"])
+    assert _passes_client_filters(SAMPLE_EVENT, filters) is True
+    filters = EventFilters(from_contains=["billing"])
+    assert _passes_client_filters(SAMPLE_EVENT, filters) is True
+    filters = EventFilters(from_contains=["nomatch"])
+    assert _passes_client_filters(SAMPLE_EVENT, filters) is False
+
+
+def test_passes_client_filters_from_not_contains():
+    filters = EventFilters(from_not_contains=["acme-mail.com"])
+    assert _passes_client_filters(SAMPLE_EVENT, filters) is False
+    filters = EventFilters(from_not_contains=["spammy-domain.com"])
+    assert _passes_client_filters(SAMPLE_EVENT, filters) is True
+
+
 def test_passes_client_filters_domain_not_contains():
     filters = EventFilters(domain_not_contains=["acme-mail.com"])
     assert _passes_client_filters(SAMPLE_EVENT, filters) is False

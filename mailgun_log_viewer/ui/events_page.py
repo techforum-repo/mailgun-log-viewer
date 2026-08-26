@@ -27,12 +27,19 @@ def _timezone_options() -> list[str]:
 def _build_filters() -> tuple[EventFilters, str]:
     st.markdown("#### Filters")
 
+    # From, Sender domain, and To each get their own operator dropdown next
+    # to a value field — Subject deliberately does NOT (it's placed in its
+    # own row below, outside both columns) since it only ever supports
+    # "contains"; keeping it out of the Sender/Recipient columns avoids it
+    # looking like it shares an operator with either.
+    _ADDRESS_OPERATORS = ["equals", "not equals", "contains", "not contains"]
+
     col1, col2 = st.columns(2)
     with col1:
         st.caption("Sender")
         from_op_col, from_value_col = st.columns([1, 2])
         with from_op_col:
-            from_operator = st.selectbox("Operator", ["equals", "not equals"], key="f_from_operator")
+            from_operator = st.selectbox("Operator", _ADDRESS_OPERATORS, key="f_from_operator")
         with from_value_col:
             from_value = st.text_input(
                 "From", key="f_from_value", placeholder="alerts@example.com, billing@example.com",
@@ -47,16 +54,21 @@ def _build_filters() -> tuple[EventFilters, str]:
                 help="Comma-separated for multiple — matches any one of them (OR).",
             )
     with col2:
-        st.caption("Recipient & subject")
+        st.caption("Recipient")
         to_op_col, to_value_col = st.columns([1, 2])
         with to_op_col:
-            to_operator = st.selectbox("Operator", ["equals", "not equals", "contains", "not contains"], key="f_to_operator")
+            to_operator = st.selectbox("Operator", _ADDRESS_OPERATORS, key="f_to_operator")
         with to_value_col:
             to_value = st.text_input(
                 "To", key="f_to_value", placeholder="jane.doe@example.com, john.smith@example.org",
                 help="Comma-separated for multiple — matches any one of them (OR).",
             )
-        subject_contains = st.text_input("Subject contains", key="f_subject_contains", placeholder="invoice")
+
+    st.caption("Subject")
+    subject_contains = st.text_input(
+        "Subject contains", key="f_subject_contains", placeholder="invoice",
+        help="Always a substring match — Subject has no equals/not-equals/not-contains operator, unlike From/To above.",
+    )
 
     from_list = parse_list(from_value)
     domain_list = parse_list(domain_value)
@@ -64,6 +76,8 @@ def _build_filters() -> tuple[EventFilters, str]:
 
     from_equals = from_list if from_operator == "equals" else []
     from_not_equals = from_list if from_operator == "not equals" else []
+    from_contains = from_list if from_operator == "contains" else []
+    from_not_contains = from_list if from_operator == "not contains" else []
     domain_contains = domain_list if domain_operator == "contains" else []
     domain_not_contains = domain_list if domain_operator == "not contains" else []
     # "equals" maps to Mailgun's native `recipient` param (see filters.py) —
@@ -109,6 +123,8 @@ def _build_filters() -> tuple[EventFilters, str]:
         ascending=ascending,
         from_equals=from_equals,
         from_not_equals=from_not_equals,
+        from_contains=from_contains,
+        from_not_contains=from_not_contains,
         domain_contains=domain_contains,
         domain_not_contains=domain_not_contains,
         subject_contains=subject_contains,
