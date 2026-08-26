@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from email.utils import format_datetime
 
 from mailgun_log_viewer.filters import (
     EventFilters,
@@ -9,6 +10,7 @@ from mailgun_log_viewer.filters import (
     fetch_mock_events,
     format_epoch,
 )
+from mailgun_log_viewer.utils import get_path
 
 SAMPLE_EVENT = {
     "id": "abc123",
@@ -26,12 +28,30 @@ SAMPLE_EVENT = {
 }
 
 
-def test_native_params_includes_status_and_dates():
-    filters = EventFilters(begin=datetime(2026, 8, 1, tzinfo=timezone.utc), end=datetime(2026, 8, 20, tzinfo=timezone.utc))
+def test_native_params_swaps_begin_end_for_descending_default():
+    """Regression: Mailgun's begin/end are directional, not "start/end of
+    range" — with ascending=no (the default, "newest first"), Mailgun walks
+    backward from a newer begin to an older end, so the user's older/newer
+    picks must be swapped or Mailgun 400s with "Inconsistent range" (as it
+    did, live, before this swap existed)."""
+    older = datetime(2026, 8, 11, tzinfo=timezone.utc)
+    newer = datetime(2026, 8, 26, tzinfo=timezone.utc)
+    filters = EventFilters(begin=older, end=newer, ascending=False)
     params = _native_params(filters, "delivered")
     assert params["event"] == "delivered"
-    assert "begin" in params and "end" in params
     assert params["ascending"] == "no"
+    assert params["begin"] == format_datetime(newer)
+    assert params["end"] == format_datetime(older)
+
+
+def test_native_params_keeps_begin_end_as_picked_for_ascending():
+    older = datetime(2026, 8, 11, tzinfo=timezone.utc)
+    newer = datetime(2026, 8, 26, tzinfo=timezone.utc)
+    filters = EventFilters(begin=older, end=newer, ascending=True)
+    params = _native_params(filters, None)
+    assert params["ascending"] == "yes"
+    assert params["begin"] == format_datetime(older)
+    assert params["end"] == format_datetime(newer)
 
 
 def test_native_params_maps_to_equals_to_recipient():
@@ -90,13 +110,23 @@ def test_events_to_dataframe_uses_requested_columns():
 
 def test_fetch_mock_events_respects_status_filter():
     filters = EventFilters(statuses=["failed"])
-    events = fetch_mock_events("mock.example.com", filters, seed=42)
+    events = fetch_mock_events(["mock.example.com"], filters, seed=42)
     assert events  # deterministic seed should produce at least one failed event
     assert all(e["event"] == "failed" for e in events)
 
 
 def test_fetch_mock_events_from_not_equals_excludes_matches():
-    baseline = fetch_mock_events("mock.example.com", EventFilters(), seed=42)
+    baseline = fetch_mock_events(["mock.example.com"], EventFilters(), seed=42)
     sender_to_exclude = baseline[0]["envelope"]["sender"]
-    filtered = fetch_mock_events("mock.example.com", EventFilters(from_not_equals=sender_to_exclude), seed=42)
+    filtered = fetch_mock_events(["mock.example.com"], EventFilters(from_not_equals=sender_to_exclude), seed=42)
     assert all(e["envelope"]["sender"] != sender_to_exclude for e in filtered)
+
+
+def test_fetch_mock_events_queries_every_configured_domain():
+    """Regression: a single-domain picker used to make this filter
+    redundant with it — now every configured domain is always queried and
+    merged, so results can come from more than one."""
+    events = fetch_mock_events(["brand-a.example.com", "brand-b.example.com"], EventFilters(), seed=42)
+    message_ids = [str(get_path(e, "message.headers.message-id")) for e in events]
+    assert any("brand-a.example.com" in mid for mid in message_ids)
+    assert any("brand-b.example.com" in mid for mid in message_ids)

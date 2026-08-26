@@ -1,10 +1,11 @@
 # Mailgun Log Viewer
 
 A small Streamlit app for querying Mailgun's [Events API](https://documentation.mailgun.com/en/latest/api-events.html)
-with filters Mailgun itself doesn't support server-side (sender not-equals,
-sender-domain not-contains, subject contains, ...), and picking exactly the
-columns you want in the result — e.g. `@timestamp`, `message.headers.from`,
-`message.headers.subject`, `message.headers.to`.
+across every domain on your account at once, with filters Mailgun itself
+doesn't support server-side (sender not-equals, sender-domain not-contains,
+subject contains, ...), and picking exactly the columns you want in the
+result — e.g. `@timestamp`, `message.headers.from`, `message.headers.subject`,
+`message.headers.to`.
 
 ## Quick start
 
@@ -45,11 +46,17 @@ client-side against whatever came back:
 |---|---|
 | Status | Mailgun (`event=`) — one call per selected status |
 | Date range | Mailgun (`begin=`/`end=`) |
-| To equals | Mailgun (`recipient=`, exact match) |
-| From equals / not equals | Local, after fetching |
-| Sender domain contains / not contains | Local, after fetching |
+| To — equals | Mailgun (`recipient=`, exact match) |
+| From — equals / not equals | Local, after fetching |
+| Sender domain — contains / not contains | Local, after fetching |
 | Subject contains | Local, after fetching |
-| To contains | Local, after fetching |
+| To — contains | Local, after fetching |
+
+From, Sender domain, and To are each a single value field plus an operator
+dropdown next to it — one field, not a pair of boxes for "equals" and "not
+equals". Only the operator actually chosen determines which underlying
+filter fires; e.g. switching To's operator from "equals" to "contains"
+stops sending `recipient=` server-side and starts filtering locally instead.
 
 This means a very wide date range combined with only local filters can pull
 (and discard) a lot of events before you see the ones you actually wanted —
@@ -59,6 +66,31 @@ regardless, so it can't run away.
 
 The Events page shows this table's local-vs-Mailgun split inline, and each
 event carries its full raw JSON in an expander for spot-checking.
+
+### Begin/end are directional, not "start of range / end of range"
+
+Mailgun's `begin`/`end` don't mean "earlier bound / later bound" — they mean
+"where the cursor starts / where it stops," and which one has to be the
+later timestamp depends on `ascending`. With "Oldest first" unchecked
+(descending, Mailgun's default), it walks *backward* from a newer `begin`
+to an older `end`; checked, it walks forward from an older `begin` to a
+newer `end`. Typing an ordinary "from the 11th to the 26th" and sending it
+unswapped against the descending default gets rejected by Mailgun as
+`Inconsistent range`. `filters.py`'s `_native_params()` swaps them for you
+based on `ascending` so the UI's "From date"/"To date" can stay in the
+plain older→newer order no matter which direction you're sorting.
+
+## Every configured domain is queried together
+
+There's no per-session "which domain" picker — every domain listed in
+`MAILGUN_DOMAINS` is queried and merged on every "Fetch" click. This used to
+be a single-domain sidebar selector, which made the Sender domain filter
+above redundant with it (it could never narrow anything the sidebar hadn't
+already fixed). If your account only has one domain, this changes nothing
+for you day-to-day; if it has several — e.g. one Mailgun domain sending on
+behalf of multiple sub-brand `From` addresses, or several verified domains
+in one account — Sender domain now does real work across all of them at
+once instead of one at a time.
 
 ## Log retention
 
@@ -98,7 +130,7 @@ mailgun_log_viewer/
     events.py      Mailgun Events API client (pagination via `paging.next`)
     mock.py        Realistic sample events for mock mode
   ui/
-    shared.py       CSS, sidebar (domain switcher, mode badge), session state
+    shared.py       CSS, sidebar (mode badge, configured domains), session state
     events_page.py  The filter form, column picker, results table, CSV export
     settings_page.py  Read-only view of the loaded .env configuration
     diagnostics_page.py  Connection test, log file download

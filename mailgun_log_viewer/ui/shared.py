@@ -43,12 +43,16 @@ def init_session_state() -> None:
             st.session_state[key] = value
 
 
-def get_active_domain() -> str:
-    """The Mailgun sending domain every page should query — the sidebar
-    switcher's current value, defaulting to the first entry in
-    MAILGUN_DOMAINS before the switcher has been touched. Session-only:
-    never writes back to .env."""
-    return st.session_state.get("active_domain") or (settings.domain_list[0] if settings.domain_list else "")
+def query_domains() -> list[str]:
+    """Every domain a fetch queries — no per-session "active domain" picker
+    any more. Previously the sidebar restricted a session to one
+    MAILGUN_DOMAINS entry at a time, which made the Events page's sender-
+    domain contains/not-contains filter redundant (it could never narrow
+    anything the sidebar hadn't already fixed). Now every configured domain
+    is always queried and merged, so that filter does real work when an
+    account has more than one domain — mock mode mirrors this with its own
+    fixed list."""
+    return settings.domain_list or (["mock.example.com"] if settings.mock_mode else [])
 
 
 def render_sidebar() -> str:
@@ -61,11 +65,9 @@ def render_sidebar() -> str:
         if settings.mock_mode:
             st.caption("Set MOCK_MODE=false in .env once a Mailgun API key and domain are filled in.")
         st.divider()
-        domain_options = settings.domain_list or (["(no domain configured)"] if not settings.mock_mode else ["mock.example.com"])
-        st.session_state.setdefault("active_domain", domain_options[0])
-        if st.session_state["active_domain"] not in domain_options:
-            domain_options = [st.session_state["active_domain"], *domain_options]
-        st.selectbox("Sending domain", domain_options, key="active_domain", help="Which Mailgun domain's event log to query.")
+        domains = query_domains()
+        st.caption("Querying domain(s): **" + (", ".join(domains) if domains else "(none configured)") + "**")
+        st.caption("Edit MAILGUN_DOMAINS in .env to add or remove one.")
         st.caption(f"Region: **{settings.mailgun_region.upper()}** — events retained roughly the last **{LOG_RETENTION_DAYS} days**.")
     return page
 

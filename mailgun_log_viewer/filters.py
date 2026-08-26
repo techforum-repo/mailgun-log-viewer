@@ -91,10 +91,24 @@ def _native_params(filters: EventFilters, status: str | None) -> dict[str, Any]:
         "limit": settings.events_page_size,
         "ascending": "yes" if filters.ascending else "no",
     }
-    if filters.begin is not None:
-        params["begin"] = format_datetime(filters.begin)
-    if filters.end is not None:
-        params["end"] = format_datetime(filters.end)
+    # Mailgun's begin/end are directional, not "start of range / end of
+    # range": begin is where the cursor starts, end is where it stops, and
+    # which one has to be chronologically later depends on `ascending`.
+    # Descending (ascending=no, Mailgun's default and this app's) walks
+    # backward from a newer begin to an older end; ascending walks forward
+    # from an older begin to a newer end. filters.begin/end above are
+    # always "the user's chosen older bound" / "...newer bound" regardless
+    # of direction — so they're swapped here for descending, or Mailgun
+    # rejects the pair outright with "Inconsistent range" (confirmed live:
+    # a perfectly normal "from the 11th to the 26th" 400'd before this
+    # swap, because that's an older-to-newer pair sent unswapped against
+    # the descending default).
+    older, newer = filters.begin, filters.end
+    native_begin, native_end = (older, newer) if filters.ascending else (newer, older)
+    if native_begin is not None:
+        params["begin"] = format_datetime(native_begin)
+    if native_end is not None:
+        params["end"] = format_datetime(native_end)
     if status:
         params["event"] = status
     if filters.to_equals.strip():
@@ -125,22 +139,26 @@ def _passes_client_filters(event: dict[str, Any], filters: EventFilters) -> bool
 
 
 async def fetch_filtered_events(
-    client: EventsClient, http: httpx.AsyncClient, domain: str, filters: EventFilters
+    client: EventsClient, http: httpx.AsyncClient, domains: list[str], filters: EventFilters
 ) -> list[dict[str, Any]]:
-    """One call per selected status (or one call total if none selected),
-    each already capped by settings.max_events_per_query — then merged,
-    de-duplicated by Mailgun's event id (only possible if the same event
-    somehow matched two status calls, which shouldn't happen since `event`
-    is a single value per item, but cheap to guard), truncated to the
-    overall cap again since multiple status calls each apply their own, and
-    finally narrowed by every client-side-only condition."""
+    """One call per (domain, selected status) pair — every configured
+    domain is always queried and merged, not just a single picked one (see
+    ui/shared.py's query_domains() for why: a single-domain picker made the
+    sender-domain contains/not-contains filter below redundant with it).
+    Results are de-duplicated by (domain, event id) — Mailgun's id is only
+    guaranteed unique within one domain's log, not across domains — then
+    truncated to the overall cap (each per-domain/status call is already
+    capped individually by client.fetch_events, so this only matters once
+    more than one of them returned close to that cap), and finally narrowed
+    by every client-side-only condition."""
     statuses = filters.statuses or [None]
     merged: dict[str, dict[str, Any]] = {}
-    for status in statuses:
-        params = _native_params(filters, status)
-        for event in await client.fetch_events(http, domain, params):
-            event_id = str(event.get("id") or len(merged))
-            merged.setdefault(event_id, event)
+    for domain in domains:
+        for status in statuses:
+            params = _native_params(filters, status)
+            for event in await client.fetch_events(http, domain, params):
+                event_id = f"{domain}:{event.get('id') or len(merged)}"
+                merged.setdefault(event_id, event)
 
     events = list(merged.values())[: settings.max_events_per_query]
     return [e for e in events if _passes_client_filters(e, filters)]
@@ -163,20 +181,24 @@ def _matches_status_and_date(event: dict[str, Any], filters: EventFilters) -> bo
     return True
 
 
-def fetch_mock_events(domain: str, filters: EventFilters, *, seed: int | None = None) -> list[dict[str, Any]]:
-    events = mock_client.generate_events(domain, count=settings.max_events_per_query, seed=seed)
+def fetch_mock_events(domains: list[str], filters: EventFilters, *, seed: int | None = None) -> list[dict[str, Any]]:
+    per_domain = max(settings.max_events_per_query // max(len(domains), 1), 1)
+    events: list[dict[str, Any]] = []
+    for domain in domains:
+        events.extend(mock_client.generate_events(domain, count=per_domain, seed=seed))
+    events.sort(key=lambda e: e["timestamp"], reverse=True)
     return [e for e in events if _matches_status_and_date(e, filters) and _passes_client_filters(e, filters)]
 
 
-async def fetch_events(domain: str, filters: EventFilters, *, mock_seed: int | None = None) -> list[dict[str, Any]]:
+async def fetch_events(domains: list[str], filters: EventFilters, *, mock_seed: int | None = None) -> list[dict[str, Any]]:
     """Single entry point ui/events_page.py calls — dispatches to mock or
     live data depending on settings.mock_mode so the page itself never
     branches on it."""
     if settings.mock_mode:
-        return fetch_mock_events(domain, filters, seed=mock_seed)
+        return fetch_mock_events(domains, filters, seed=mock_seed)
     client = EventsClient()
     async with client._new_http_client() as http:  # noqa: SLF001 (same package)
-        return await fetch_filtered_events(client, http, domain, filters)
+        return await fetch_filtered_events(client, http, domains, filters)
 
 
 def format_epoch(value: Any) -> str:

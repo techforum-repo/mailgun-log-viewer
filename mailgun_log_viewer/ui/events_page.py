@@ -8,7 +8,7 @@ from .. import filters as filters_module
 from ..config import LOG_RETENTION_DAYS
 from ..filters import COLUMN_OPTIONS, DEFAULT_COLUMNS, EVENT_TYPES, EventFilters
 from ..utils import run_async, safe_csv
-from .shared import fetch_button, get_active_domain, render_friendly_error
+from .shared import fetch_button, query_domains, render_friendly_error
 
 
 def _default_begin() -> datetime:
@@ -30,8 +30,11 @@ def _build_filters() -> EventFilters:
             from_operator = st.selectbox("Operator", ["equals", "not equals"], key="f_from_operator")
         with from_value_col:
             from_value = st.text_input("From", key="f_from_value", placeholder="alerts@example.com")
-        domain_contains = st.text_input("Sender domain contains", key="f_domain_contains", placeholder="example.com")
-        domain_not_contains = st.text_input("Sender domain not contains", key="f_domain_not_contains", placeholder="mailgun.org")
+        domain_op_col, domain_value_col = st.columns([1, 2])
+        with domain_op_col:
+            domain_operator = st.selectbox("Operator", ["contains", "not contains"], key="f_domain_operator")
+        with domain_value_col:
+            domain_value = st.text_input("Sender domain", key="f_domain_value", placeholder="example.com")
     with col2:
         st.caption("Recipient & subject")
         to_op_col, to_value_col = st.columns([1, 2])
@@ -43,6 +46,8 @@ def _build_filters() -> EventFilters:
 
     from_equals = from_value if from_operator == "equals" else ""
     from_not_equals = from_value if from_operator == "not equals" else ""
+    domain_contains = domain_value if domain_operator == "contains" else ""
+    domain_not_contains = domain_value if domain_operator == "not contains" else ""
     # "equals" maps to Mailgun's native `recipient` param (see filters.py) —
     # only true when the value is used that way, so switching the operator
     # to "contains" doesn't silently keep sending it server-side.
@@ -79,9 +84,9 @@ def _build_filters() -> EventFilters:
     )
 
 
-def _do_fetch(domain: str, spec: EventFilters) -> None:
+def _do_fetch(domains: list[str], spec: EventFilters) -> None:
     try:
-        events = run_async(filters_module.fetch_events(domain, spec, mock_seed=st.session_state.mock_seed))
+        events = run_async(filters_module.fetch_events(domains, spec, mock_seed=st.session_state.mock_seed))
         st.session_state.events_rows = events
         st.session_state["_events_error"] = None
     except Exception as exc:
@@ -90,8 +95,9 @@ def _do_fetch(domain: str, spec: EventFilters) -> None:
 
 def render() -> None:
     st.markdown("### Events")
+    domains = query_domains()
     st.caption(
-        f"Domain: **{get_active_domain() or '(none configured)'}**. Mailgun's Events API has no native "
+        f"Domain(s): **{', '.join(domains) or '(none configured)'}**. Mailgun's Events API has no native "
         "\"not equals\"/\"not contains\"/sender/subject filters — Status and dates are sent to Mailgun; "
         "everything else is applied to the results locally after fetching."
     )
@@ -107,12 +113,12 @@ def render() -> None:
     )
 
     if fetch_button("Fetch events", key="events_fetch"):
-        _do_fetch(get_active_domain(), spec)
+        _do_fetch(domains, spec)
 
     error = st.session_state.get("_events_error")
     if error is not None:
         if render_friendly_error(error, key="events_retry", context="Fetching events"):
-            _do_fetch(get_active_domain(), spec)
+            _do_fetch(domains, spec)
             st.rerun()
         return
 
