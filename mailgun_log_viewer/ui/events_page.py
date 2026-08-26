@@ -7,7 +7,7 @@ import streamlit as st
 from .. import filters as filters_module
 from ..config import LOG_RETENTION_DAYS, settings
 from ..filters import COLUMN_OPTIONS, DEFAULT_COLUMNS, EVENT_TYPES, EventFilters
-from ..utils import local_now, run_async, safe_csv, to_utc
+from ..utils import local_now, parse_list, run_async, safe_csv, to_utc
 from .shared import fetch_button, query_domains, render_friendly_error
 
 # A curated shortlist for the timezone picker, not an exhaustive IANA list —
@@ -34,30 +34,44 @@ def _build_filters() -> EventFilters:
         with from_op_col:
             from_operator = st.selectbox("Operator", ["equals", "not equals"], key="f_from_operator")
         with from_value_col:
-            from_value = st.text_input("From", key="f_from_value", placeholder="alerts@example.com")
+            from_value = st.text_input(
+                "From", key="f_from_value", placeholder="alerts@example.com, billing@example.com",
+                help="Comma-separated for multiple — matches any one of them (OR).",
+            )
         domain_op_col, domain_value_col = st.columns([1, 2])
         with domain_op_col:
             domain_operator = st.selectbox("Operator", ["contains", "not contains"], key="f_domain_operator")
         with domain_value_col:
-            domain_value = st.text_input("Sender domain", key="f_domain_value", placeholder="example.com")
+            domain_value = st.text_input(
+                "Sender domain", key="f_domain_value", placeholder="example.com, mailgun.org",
+                help="Comma-separated for multiple — matches any one of them (OR).",
+            )
     with col2:
         st.caption("Recipient & subject")
         to_op_col, to_value_col = st.columns([1, 2])
         with to_op_col:
             to_operator = st.selectbox("Operator", ["equals", "contains"], key="f_to_operator")
         with to_value_col:
-            to_value = st.text_input("To", key="f_to_value", placeholder="jane.doe@example.com")
+            to_value = st.text_input(
+                "To", key="f_to_value", placeholder="jane.doe@example.com, john.smith@example.org",
+                help="Comma-separated for multiple — matches any one of them (OR).",
+            )
         subject_contains = st.text_input("Subject contains", key="f_subject_contains", placeholder="invoice")
 
-    from_equals = from_value if from_operator == "equals" else ""
-    from_not_equals = from_value if from_operator == "not equals" else ""
-    domain_contains = domain_value if domain_operator == "contains" else ""
-    domain_not_contains = domain_value if domain_operator == "not contains" else ""
+    from_list = parse_list(from_value)
+    domain_list = parse_list(domain_value)
+    to_list = parse_list(to_value)
+
+    from_equals = from_list if from_operator == "equals" else []
+    from_not_equals = from_list if from_operator == "not equals" else []
+    domain_contains = domain_list if domain_operator == "contains" else []
+    domain_not_contains = domain_list if domain_operator == "not contains" else []
     # "equals" maps to Mailgun's native `recipient` param (see filters.py) —
     # only true when the value is used that way, so switching the operator
-    # to "contains" doesn't silently keep sending it server-side.
-    to_equals = to_value if to_operator == "equals" else ""
-    to_contains = to_value if to_operator == "contains" else ""
+    # to "contains" doesn't silently keep sending it server-side. Multiple
+    # "equals" addresses become one native call per address.
+    to_equals = to_list if to_operator == "equals" else []
+    to_contains = to_list if to_operator == "contains" else []
 
     st.caption("Status & date range")
     tz_options = _timezone_options()

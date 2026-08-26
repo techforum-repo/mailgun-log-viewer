@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from mailgun_log_viewer.utils import extract_domain, extract_email_address, get_path, local_now, sanitize_csv_cell, to_utc
+from mailgun_log_viewer.utils import extract_domain, extract_email_address, get_path, local_now, parse_list, sanitize_csv_cell, to_utc
 
 
 def test_extract_email_address_with_display_name():
@@ -73,3 +73,20 @@ def test_local_now_returns_aware_datetime_for_valid_zone():
     result = local_now("America/Chicago")
     assert result.tzinfo is not None
     assert result.utcoffset() is not None
+
+
+def test_parse_list_splits_and_trims():
+    assert parse_list("alerts@example.com, billing@example.com") == ["alerts@example.com", "billing@example.com"]
+
+
+def test_parse_list_drops_empty_entries():
+    assert parse_list("alerts@example.com, , billing@example.com,") == ["alerts@example.com", "billing@example.com"]
+
+
+def test_parse_list_empty_string_returns_empty_list():
+    assert parse_list("") == []
+    assert parse_list("   ") == []
+
+
+def test_parse_list_single_value_no_comma():
+    assert parse_list("alerts@example.com") == ["alerts@example.com"]

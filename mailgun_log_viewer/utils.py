@@ -92,6 +92,14 @@ def safe_csv(df: pd.DataFrame, *, index: bool = False) -> bytes:
     return sanitized.to_csv(index=index).encode("utf-8-sig")
 
 
+def parse_list(value: str) -> list[str]:
+    """Split a comma-separated text-input value into a trimmed, non-empty
+    list — how every multi-value filter (From, To, Sender domain) on the
+    Events page accepts more than one address/domain at once, OR'd
+    together, without needing a dedicated multi-value widget."""
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def local_now(tz_name: str) -> datetime:
     """The current time in the given IANA zone — same fallback-to-UTC
     behavior as to_utc(), for the Events page's date pickers to default to

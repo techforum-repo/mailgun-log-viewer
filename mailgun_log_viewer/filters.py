@@ -66,27 +66,32 @@ class EventFilters:
     ascending: bool = False
 
     # Sender — no native Mailgun filter; always applied client-side against
-    # message.headers.from.
-    from_equals: str = ""
-    from_not_equals: str = ""
-    domain_contains: str = ""
-    domain_not_contains: str = ""
+    # message.headers.from. Each is a list so multiple addresses/domains
+    # can be checked at once with OR semantics: from_equals matches if the
+    # sender is *any* of these; from_not_equals excludes if it's *any* of
+    # these (equivalent to "not equal to every one of them").
+    from_equals: list[str] = field(default_factory=list)
+    from_not_equals: list[str] = field(default_factory=list)
+    domain_contains: list[str] = field(default_factory=list)
+    domain_not_contains: list[str] = field(default_factory=list)
 
     # Subject — no native filter either.
     subject_contains: str = ""
 
     # Recipient — `to_equals` maps to Mailgun's native `recipient` param
-    # (an exact match, cheap to push server-side); `to_contains` has no
-    # native equivalent and is applied client-side.
-    to_equals: str = ""
-    to_contains: str = ""
+    # (an exact match, cheap to push server-side, one call per address —
+    # see fetch_filtered_events); `to_contains` has no native equivalent
+    # and is applied client-side, also OR across every value given.
+    to_equals: list[str] = field(default_factory=list)
+    to_contains: list[str] = field(default_factory=list)
 
 
-def _native_params(filters: EventFilters, status: str | None) -> dict[str, Any]:
+def _native_params(filters: EventFilters, status: str | None, recipient: str | None = None) -> dict[str, Any]:
     """Query params Mailgun itself understands, for one status value (or
-    None for "every type"). Multiple selected statuses become multiple
-    calls — see fetch_filtered_events — because the API takes a single
-    `event` value per request."""
+    None for "every type") and one recipient (or None for "no recipient
+    filter"). Multiple selected statuses/recipients become multiple calls —
+    see fetch_filtered_events — because the API takes a single `event`/
+    `recipient` value per request."""
     params: dict[str, Any] = {
         "limit": settings.events_page_size,
         "ascending": "yes" if filters.ascending else "no",
@@ -111,8 +116,8 @@ def _native_params(filters: EventFilters, status: str | None) -> dict[str, Any]:
         params["end"] = format_datetime(native_end)
     if status:
         params["event"] = status
-    if filters.to_equals.strip():
-        params["recipient"] = filters.to_equals.strip()
+    if recipient:
+        params["recipient"] = recipient
     return params
 
 
@@ -123,17 +128,23 @@ def _passes_client_filters(event: dict[str, Any], filters: EventFilters) -> bool
     from_addr = extract_email_address(from_header)
     domain = extract_domain(from_header)
 
-    if filters.from_equals.strip() and from_addr != filters.from_equals.strip().lower():
+    from_equals = {v.strip().lower() for v in filters.from_equals if v.strip()}
+    from_not_equals = {v.strip().lower() for v in filters.from_not_equals if v.strip()}
+    domain_contains = [v.strip().lower() for v in filters.domain_contains if v.strip()]
+    domain_not_contains = [v.strip().lower() for v in filters.domain_not_contains if v.strip()]
+    to_contains = [v.strip().lower() for v in filters.to_contains if v.strip()]
+
+    if from_equals and from_addr not in from_equals:
         return False
-    if filters.from_not_equals.strip() and from_addr == filters.from_not_equals.strip().lower():
+    if from_not_equals and from_addr in from_not_equals:
         return False
-    if filters.domain_contains.strip() and filters.domain_contains.strip().lower() not in domain:
+    if domain_contains and not any(v in domain for v in domain_contains):
         return False
-    if filters.domain_not_contains.strip() and filters.domain_not_contains.strip().lower() in domain:
+    if domain_not_contains and any(v in domain for v in domain_not_contains):
         return False
     if filters.subject_contains.strip() and filters.subject_contains.strip().lower() not in subject.lower():
         return False
-    if filters.to_contains.strip() and filters.to_contains.strip().lower() not in to_header.lower():
+    if to_contains and not any(v in to_header.lower() for v in to_contains):
         return False
     return True
 
@@ -141,24 +152,29 @@ def _passes_client_filters(event: dict[str, Any], filters: EventFilters) -> bool
 async def fetch_filtered_events(
     client: EventsClient, http: httpx.AsyncClient, domains: list[str], filters: EventFilters
 ) -> list[dict[str, Any]]:
-    """One call per (domain, selected status) pair — every configured
-    domain is always queried and merged, not just a single picked one (see
-    ui/shared.py's query_domains() for why: a single-domain picker made the
-    sender-domain contains/not-contains filter below redundant with it).
-    Results are de-duplicated by (domain, event id) — Mailgun's id is only
-    guaranteed unique within one domain's log, not across domains — then
-    truncated to the overall cap (each per-domain/status call is already
-    capped individually by client.fetch_events, so this only matters once
-    more than one of them returned close to that cap), and finally narrowed
-    by every client-side-only condition."""
+    """One call per (domain, selected status, selected recipient) triple —
+    every configured domain is always queried and merged, not just a single
+    picked one (see ui/shared.py's query_domains() for why: a single-domain
+    picker made the sender-domain contains/not-contains filter below
+    redundant with it), and multiple "To equals" addresses each get their
+    own native `recipient=` call rather than one call trying to OR them
+    (Mailgun's recipient param takes exactly one address). Results are
+    de-duplicated by (domain, event id) — Mailgun's id is only guaranteed
+    unique within one domain's log, not across domains — then truncated to
+    the overall cap (each individual call is already capped by
+    client.fetch_events, so this only matters once more than one of them
+    returned close to that cap), and finally narrowed by every client-side-
+    only condition."""
     statuses = filters.statuses or [None]
+    recipients = filters.to_equals or [None]
     merged: dict[str, dict[str, Any]] = {}
     for domain in domains:
         for status in statuses:
-            params = _native_params(filters, status)
-            for event in await client.fetch_events(http, domain, params):
-                event_id = f"{domain}:{event.get('id') or len(merged)}"
-                merged.setdefault(event_id, event)
+            for recipient in recipients:
+                params = _native_params(filters, status, recipient)
+                for event in await client.fetch_events(http, domain, params):
+                    event_id = f"{domain}:{event.get('id') or len(merged)}"
+                    merged.setdefault(event_id, event)
 
     events = list(merged.values())[: settings.max_events_per_query]
     return [e for e in events if _passes_client_filters(e, filters)]
@@ -176,7 +192,8 @@ def _matches_status_and_date(event: dict[str, Any], filters: EventFilters) -> bo
         return False
     if filters.end is not None and timestamp is not None and timestamp > filters.end.timestamp():
         return False
-    if filters.to_equals.strip() and str(event.get("recipient") or "").lower() != filters.to_equals.strip().lower():
+    to_equals = {v.strip().lower() for v in filters.to_equals if v.strip()}
+    if to_equals and str(event.get("recipient") or "").lower() not in to_equals:
         return False
     return True
 

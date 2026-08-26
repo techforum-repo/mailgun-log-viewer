@@ -55,31 +55,50 @@ def test_native_params_keeps_begin_end_as_picked_for_ascending():
 
 
 def test_native_params_maps_to_equals_to_recipient():
-    filters = EventFilters(to_equals="jane.doe@example.com")
-    params = _native_params(filters, None)
+    params = _native_params(EventFilters(), None, recipient="jane.doe@example.com")
     assert params["recipient"] == "jane.doe@example.com"
     assert "event" not in params
 
 
 def test_passes_client_filters_from_equals():
-    filters = EventFilters(from_equals="billing@acme-mail.com")
+    filters = EventFilters(from_equals=["billing@acme-mail.com"])
     assert _passes_client_filters(SAMPLE_EVENT, filters) is True
-    filters = EventFilters(from_equals="someone-else@acme-mail.com")
+    filters = EventFilters(from_equals=["someone-else@acme-mail.com"])
+    assert _passes_client_filters(SAMPLE_EVENT, filters) is False
+
+
+def test_passes_client_filters_from_equals_multiple_is_or():
+    """Multiple From-equals addresses match if the sender is *any* of them."""
+    filters = EventFilters(from_equals=["someone-else@acme-mail.com", "billing@acme-mail.com"])
+    assert _passes_client_filters(SAMPLE_EVENT, filters) is True
+    filters = EventFilters(from_equals=["someone-else@acme-mail.com", "another@acme-mail.com"])
     assert _passes_client_filters(SAMPLE_EVENT, filters) is False
 
 
 def test_passes_client_filters_from_not_equals():
-    filters = EventFilters(from_not_equals="billing@acme-mail.com")
+    filters = EventFilters(from_not_equals=["billing@acme-mail.com"])
     assert _passes_client_filters(SAMPLE_EVENT, filters) is False
-    filters = EventFilters(from_not_equals="someone-else@acme-mail.com")
+    filters = EventFilters(from_not_equals=["someone-else@acme-mail.com"])
     assert _passes_client_filters(SAMPLE_EVENT, filters) is True
+
+
+def test_passes_client_filters_from_not_equals_multiple_excludes_any_match():
+    filters = EventFilters(from_not_equals=["someone-else@acme-mail.com", "billing@acme-mail.com"])
+    assert _passes_client_filters(SAMPLE_EVENT, filters) is False
 
 
 def test_passes_client_filters_domain_not_contains():
-    filters = EventFilters(domain_not_contains="acme-mail.com")
+    filters = EventFilters(domain_not_contains=["acme-mail.com"])
     assert _passes_client_filters(SAMPLE_EVENT, filters) is False
-    filters = EventFilters(domain_not_contains="spammy-domain.com")
+    filters = EventFilters(domain_not_contains=["spammy-domain.com"])
     assert _passes_client_filters(SAMPLE_EVENT, filters) is True
+
+
+def test_passes_client_filters_domain_contains_multiple_is_or():
+    filters = EventFilters(domain_contains=["spammy-domain.com", "acme-mail.com"])
+    assert _passes_client_filters(SAMPLE_EVENT, filters) is True
+    filters = EventFilters(domain_contains=["spammy-domain.com", "other-domain.com"])
+    assert _passes_client_filters(SAMPLE_EVENT, filters) is False
 
 
 def test_passes_client_filters_subject_contains_case_insensitive():
@@ -118,8 +137,18 @@ def test_fetch_mock_events_respects_status_filter():
 def test_fetch_mock_events_from_not_equals_excludes_matches():
     baseline = fetch_mock_events(["mock.example.com"], EventFilters(), seed=42)
     sender_to_exclude = baseline[0]["envelope"]["sender"]
-    filtered = fetch_mock_events(["mock.example.com"], EventFilters(from_not_equals=sender_to_exclude), seed=42)
+    filtered = fetch_mock_events(["mock.example.com"], EventFilters(from_not_equals=[sender_to_exclude]), seed=42)
     assert all(e["envelope"]["sender"] != sender_to_exclude for e in filtered)
+
+
+def test_fetch_mock_events_to_equals_multiple_addresses_is_or():
+    baseline = fetch_mock_events(["mock.example.com"], EventFilters(), seed=42)
+    recipients = sorted({e["recipient"] for e in baseline})
+    assert len(recipients) >= 2
+    wanted = recipients[:2]
+    filtered = fetch_mock_events(["mock.example.com"], EventFilters(to_equals=wanted), seed=42)
+    assert filtered
+    assert all(e["recipient"] in wanted for e in filtered)
 
 
 def test_fetch_mock_events_queries_every_configured_domain():
