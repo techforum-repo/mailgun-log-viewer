@@ -135,6 +135,19 @@ def to_utc(local_dt: datetime, tz_name: str) -> datetime:
     return local_dt.replace(tzinfo=tz).astimezone(timezone.utc)
 
 
+def local_hour_bucket(epoch_seconds: float, tz_name: str) -> str:
+    """The hour-bucket label (e.g. "2026-08-26 14:00") for a Unix timestamp,
+    in the given IANA zone — same fallback-to-UTC behavior as to_utc()/
+    local_now(). Powers the Events page's "volume by sender, hourly" chart
+    so its buckets line up with whatever timezone the date range itself is
+    being viewed in, rather than always bucketing in UTC."""
+    try:
+        tz = ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        tz = timezone.utc
+    return datetime.fromtimestamp(epoch_seconds, tz=tz).strftime("%Y-%m-%d %H:00")
+
+
 def harden_file_permissions(path: Path, *, mode: int = 0o600) -> None:
     """Restrict a local data file (SQLite DB, log file, .env) to the owning
     user only. Defaults to 0o600; pass mode=0o700 for a directory.

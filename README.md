@@ -112,6 +112,19 @@ never reads it, so a report built here can show a given event at a
 different clock time than Mailgun's own dashboard does if your account's
 dashboard timezone differs from `REPORT_TIMEZONE`).
 
+## Chart: volume by sender, hourly
+
+Below the results table, a stacked bar chart shows event count per hour
+bucket, broken down by sender address — built with Streamlit's native
+charting (no extra dependency), so it comes with a built-in "⋮" menu
+(hover the chart, top-right) to download it as a PNG for pasting into a
+report. Hour buckets are computed in whichever timezone the date-range
+picker above is set to (`filters.sender_hourly_counts()` /
+`utils.local_hour_bucket()`), not UTC, so they line up with the rest of the
+page. Only the 8 busiest senders in the current result set get their own
+color; everyone else is folded into "Other" so a domain with dozens of
+senders doesn't turn the chart into noise.
+
 ## Every configured domain is queried together
 
 There's no per-session "which domain" picker — every domain listed in
@@ -156,8 +169,8 @@ mailgun_log_viewer/
   errors.py        friendly_error() — exception -> title + plausible causes
   retry.py         call_with_retry() — retries only what friendly_error() says is transient
   logging_setup.py Rotating file logger under logs/ (Streamlit only prints to stdout)
-  filters.py       EventFilters (multi-value OR filters), native-vs-local query splitting, column extraction
-  utils.py         to_utc()/local_now() (zoneinfo-based timezone conversion), parse_list(), CSV/log sanitization
+  filters.py       EventFilters (multi-value OR filters), native-vs-local query splitting, column extraction, sender_hourly_counts()
+  utils.py         to_utc()/local_now()/local_hour_bucket() (zoneinfo-based timezone conversion), parse_list(), CSV/log sanitization
   clients/
     base.py        Shared HTTP plumbing: request pacing, error normalization
     events.py      Mailgun Events API client (pagination via `paging.next`)

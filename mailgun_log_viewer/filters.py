@@ -25,7 +25,7 @@ import pandas as pd
 from .clients import mock as mock_client
 from .clients.events import EventsClient
 from .config import settings
-from .utils import extract_domain, extract_email_address, get_path
+from .utils import extract_domain, extract_email_address, get_path, local_hour_bucket
 
 # Every event type Mailgun's Events API recognizes — used to populate the
 # status multiselect. https://documentation.mailgun.com/en/latest/api-events.html#event-types
@@ -240,3 +240,35 @@ def events_to_dataframe(events: list[dict[str, Any]], columns: list[str]) -> pd.
     if not columns:
         columns = DEFAULT_COLUMNS
     return pd.DataFrame([extract_row(e, columns) for e in events], columns=columns)
+
+
+def sender_hourly_counts(events: list[dict[str, Any]], tz_name: str, *, top_n: int = 8) -> pd.DataFrame:
+    """Pivot for the Events page's "volume by sender, hourly" chart: one row
+    per hour bucket (in `tz_name`, so it lines up with the page's own
+    timezone-aware date range — see utils.local_hour_bucket), one column
+    per sender address, values = event count in that hour.
+
+    Only the `top_n` most frequent senders in the result set get their own
+    column; every other sender is folded into "Other" so a busy domain with
+    dozens of senders doesn't turn the chart into unreadable noise. Returns
+    an empty DataFrame if there's nothing with both a usable timestamp and
+    a parseable sender address to plot."""
+    rows: list[tuple[str, str]] = []
+    for event in events:
+        timestamp = event.get("timestamp")
+        if timestamp is None:
+            continue
+        try:
+            hour = local_hour_bucket(float(timestamp), tz_name)
+        except (TypeError, ValueError):
+            continue
+        sender = extract_email_address(get_path(event, "message.headers.from")) or "(unknown sender)"
+        rows.append((hour, sender))
+
+    if not rows:
+        return pd.DataFrame()
+
+    frame = pd.DataFrame(rows, columns=["hour", "sender"])
+    top_senders = frame["sender"].value_counts().nlargest(top_n).index
+    frame["sender"] = frame["sender"].where(frame["sender"].isin(top_senders), "Other")
+    return pd.crosstab(frame["hour"], frame["sender"]).sort_index()

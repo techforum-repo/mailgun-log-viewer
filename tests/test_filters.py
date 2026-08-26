@@ -9,6 +9,7 @@ from mailgun_log_viewer.filters import (
     extract_row,
     fetch_mock_events,
     format_epoch,
+    sender_hourly_counts,
 )
 from mailgun_log_viewer.utils import get_path
 
@@ -149,6 +150,50 @@ def test_fetch_mock_events_to_equals_multiple_addresses_is_or():
     filtered = fetch_mock_events(["mock.example.com"], EventFilters(to_equals=wanted), seed=42)
     assert filtered
     assert all(e["recipient"] in wanted for e in filtered)
+
+
+def _event(sender: str, hour_epoch: float) -> dict:
+    return {
+        "timestamp": hour_epoch,
+        "event": "delivered",
+        "message": {"headers": {"from": f"Sender <{sender}>", "to": "x@example.com", "subject": "hi"}},
+    }
+
+
+def test_sender_hourly_counts_pivots_by_hour_and_sender():
+    hour_14 = datetime(2026, 8, 26, 14, 30, tzinfo=timezone.utc).timestamp()
+    hour_15 = datetime(2026, 8, 26, 15, 10, tzinfo=timezone.utc).timestamp()
+    events = [
+        _event("a@example.com", hour_14),
+        _event("a@example.com", hour_14),
+        _event("b@example.com", hour_14),
+        _event("a@example.com", hour_15),
+    ]
+    pivot = sender_hourly_counts(events, "UTC")
+    assert list(pivot.index) == ["2026-08-26 14:00", "2026-08-26 15:00"]
+    assert pivot.loc["2026-08-26 14:00", "a@example.com"] == 2
+    assert pivot.loc["2026-08-26 14:00", "b@example.com"] == 1
+    assert pivot.loc["2026-08-26 15:00", "a@example.com"] == 1
+
+
+def test_sender_hourly_counts_folds_extra_senders_into_other():
+    hour = datetime(2026, 8, 26, 14, 0, tzinfo=timezone.utc).timestamp()
+    # 9 distinct senders, one event each — top_n=8 should keep the top 8
+    # separate and fold the 9th into "Other".
+    events = [_event(f"sender{i}@example.com", hour) for i in range(9)]
+    pivot = sender_hourly_counts(events, "UTC", top_n=8)
+    assert "Other" in pivot.columns
+    assert pivot.loc["2026-08-26 14:00"].sum() == 9
+    assert pivot.loc["2026-08-26 14:00", "Other"] == 1
+
+
+def test_sender_hourly_counts_empty_for_no_events():
+    assert sender_hourly_counts([], "UTC").empty
+
+
+def test_sender_hourly_counts_skips_events_without_timestamp():
+    events = [{"message": {"headers": {"from": "a@example.com"}}}]
+    assert sender_hourly_counts(events, "UTC").empty
 
 
 def test_fetch_mock_events_queries_every_configured_domain():

@@ -24,7 +24,7 @@ def _timezone_options() -> list[str]:
     return options
 
 
-def _build_filters() -> EventFilters:
+def _build_filters() -> tuple[EventFilters, str]:
     st.markdown("#### Filters")
 
     col1, col2 = st.columns(2)
@@ -99,7 +99,7 @@ def _build_filters() -> EventFilters:
     if begin_dt < datetime.now(timezone.utc) - timedelta(days=LOG_RETENTION_DAYS + 1):
         st.caption(f"⚠️ Mailgun retains roughly the last {LOG_RETENTION_DAYS} days of events — results before then will be empty regardless of this filter.")
 
-    return EventFilters(
+    spec = EventFilters(
         statuses=statuses,
         begin=begin_dt,
         end=end_dt,
@@ -112,6 +112,7 @@ def _build_filters() -> EventFilters:
         to_equals=to_equals,
         to_contains=to_contains,
     )
+    return spec, tz_name
 
 
 def _do_fetch(domains: list[str], spec: EventFilters) -> None:
@@ -132,7 +133,7 @@ def render() -> None:
         "everything else is applied to the results locally after fetching."
     )
 
-    spec = _build_filters()
+    spec, tz_name = _build_filters()
 
     columns = st.multiselect(
         "Columns",
@@ -165,6 +166,17 @@ def render() -> None:
     table = filters_module.events_to_dataframe(events, columns or DEFAULT_COLUMNS)
     st.dataframe(table, use_container_width=True, hide_index=True)
     st.download_button("Download as CSV", safe_csv(table), "mailgun_events.csv", "text/csv")
+
+    st.markdown("#### Volume by sender (hourly)")
+    chart_data = filters_module.sender_hourly_counts(events, tz_name)
+    if chart_data.empty:
+        st.caption("Not enough data to chart.")
+    else:
+        st.bar_chart(chart_data)
+        st.caption(
+            f"Hour buckets in **{tz_name}**. Senders beyond the top 8 by volume are grouped into \"Other\". "
+            "Hover the chart and use the ⋮ menu (top-right) to download it as a PNG to paste elsewhere."
+        )
 
     with st.expander("Raw event (first result)"):
         st.json(events[0], expanded=False)
