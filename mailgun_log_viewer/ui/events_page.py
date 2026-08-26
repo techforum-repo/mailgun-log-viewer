@@ -24,7 +24,7 @@ def _timezone_options() -> list[str]:
     return options
 
 
-def _build_filters() -> tuple[EventFilters, str]:
+def _build_filters() -> EventFilters:
     st.markdown("#### Filters")
 
     # From, Sender domain, and To each get their own operator dropdown next
@@ -133,7 +133,7 @@ def _build_filters() -> tuple[EventFilters, str]:
         to_contains=to_contains,
         to_not_contains=to_not_contains,
     )
-    return spec, tz_name
+    return spec
 
 
 def _do_fetch(domains: list[str], spec: EventFilters) -> None:
@@ -154,7 +154,7 @@ def render() -> None:
         "everything else is applied to the results locally after fetching."
     )
 
-    spec, tz_name = _build_filters()
+    spec = _build_filters()
 
     columns = st.multiselect(
         "Columns",
@@ -185,19 +185,25 @@ def render() -> None:
         return
 
     table = filters_module.events_to_dataframe(events, columns or DEFAULT_COLUMNS)
-    st.dataframe(table, use_container_width=True, hide_index=True)
-    st.download_button("Download as CSV", safe_csv(table), "mailgun_events.csv", "text/csv")
 
-    st.markdown("#### Volume by sender (hourly)")
-    chart_data = filters_module.sender_hourly_counts(events, tz_name)
-    if chart_data.empty:
-        st.caption("Not enough data to chart.")
-    else:
-        st.bar_chart(chart_data)
-        st.caption(
-            f"Hour buckets in **{tz_name}**. Senders beyond the top 8 by volume are grouped into \"Other\". "
-            "Hover the chart and use the ⋮ menu (top-right) to download it as a PNG to paste elsewhere."
-        )
+    search = st.text_input(
+        "Search results", key="results_search", placeholder="Type to narrow the table below by any visible text...",
+        help="Filters the already-fetched rows shown below — no new Mailgun call. Matches any of the selected columns, case-insensitive.",
+    )
+    visible_table = filters_module.filter_table(table, search)
+    if search.strip():
+        st.caption(f"{len(visible_table)} of {len(table)} row(s) match \"{search.strip()}\".")
 
-    with st.expander("Raw event (first result)"):
-        st.json(events[0], expanded=False)
+    st.dataframe(visible_table, use_container_width=True, hide_index=True)
+    st.download_button("Download as CSV", safe_csv(visible_table), "mailgun_events.csv", "text/csv")
+
+    with st.expander("Raw event (first visible result)"):
+        if visible_table.empty:
+            st.caption("No visible rows to show.")
+        else:
+            # filter_table() only masks rows — it never resets the index —
+            # so the DataFrame's own index still lines up with `events`'
+            # original position, letting this show the same row the table
+            # and search caption above are currently displaying, not always
+            # the pre-search events[0].
+            st.json(events[visible_table.index[0]], expanded=False)

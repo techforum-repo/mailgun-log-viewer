@@ -4,7 +4,6 @@ from mailgun_log_viewer.utils import (
     extract_domain,
     extract_email_address,
     get_path,
-    local_hour_bucket,
     local_now,
     parse_list,
     sanitize_csv_cell,
@@ -99,20 +98,3 @@ def test_parse_list_empty_string_returns_empty_list():
 
 def test_parse_list_single_value_no_comma():
     assert parse_list("alerts@example.com") == ["alerts@example.com"]
-
-
-def test_local_hour_bucket_utc():
-    epoch = datetime(2026, 8, 26, 14, 30, 0, tzinfo=timezone.utc).timestamp()
-    assert local_hour_bucket(epoch, "UTC") == "2026-08-26 14:00"
-
-
-def test_local_hour_bucket_converts_to_requested_zone():
-    """14:30 UTC on a DST date is 09:30 Central (CDT, UTC-5) — the whole
-    point of bucketing in the requested zone rather than always UTC."""
-    epoch = datetime(2026, 8, 26, 14, 30, 0, tzinfo=timezone.utc).timestamp()
-    assert local_hour_bucket(epoch, "America/Chicago") == "2026-08-26 09:00"
-
-
-def test_local_hour_bucket_falls_back_to_utc_for_unknown_zone():
-    epoch = datetime(2026, 8, 26, 14, 30, 0, tzinfo=timezone.utc).timestamp()
-    assert local_hour_bucket(epoch, "Not/A_Real_Zone") == "2026-08-26 14:00"
