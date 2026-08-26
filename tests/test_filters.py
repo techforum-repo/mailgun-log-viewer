@@ -102,6 +102,28 @@ def test_passes_client_filters_domain_contains_multiple_is_or():
     assert _passes_client_filters(SAMPLE_EVENT, filters) is False
 
 
+def test_passes_client_filters_to_not_equals_matches_against_recipient_field():
+    """Unlike to_contains (checked against the raw to_header), to_not_equals
+    is checked against Mailgun's own `recipient` field to mirror to_equals's
+    exact-match semantics."""
+    filters = EventFilters(to_not_equals=["jane.doe@example.com"])
+    assert _passes_client_filters(SAMPLE_EVENT, filters) is False
+    filters = EventFilters(to_not_equals=["someone-else@example.com"])
+    assert _passes_client_filters(SAMPLE_EVENT, filters) is True
+
+
+def test_passes_client_filters_to_not_contains():
+    filters = EventFilters(to_not_contains=["example.com"])
+    assert _passes_client_filters(SAMPLE_EVENT, filters) is False
+    filters = EventFilters(to_not_contains=["other-domain.com"])
+    assert _passes_client_filters(SAMPLE_EVENT, filters) is True
+
+
+def test_passes_client_filters_to_not_equals_multiple_excludes_any_match():
+    filters = EventFilters(to_not_equals=["someone-else@example.com", "jane.doe@example.com"])
+    assert _passes_client_filters(SAMPLE_EVENT, filters) is False
+
+
 def test_passes_client_filters_subject_contains_case_insensitive():
     filters = EventFilters(subject_contains="INVOICE")
     assert _passes_client_filters(SAMPLE_EVENT, filters) is True

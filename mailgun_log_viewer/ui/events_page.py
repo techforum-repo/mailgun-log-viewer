@@ -50,7 +50,7 @@ def _build_filters() -> tuple[EventFilters, str]:
         st.caption("Recipient & subject")
         to_op_col, to_value_col = st.columns([1, 2])
         with to_op_col:
-            to_operator = st.selectbox("Operator", ["equals", "contains"], key="f_to_operator")
+            to_operator = st.selectbox("Operator", ["equals", "not equals", "contains", "not contains"], key="f_to_operator")
         with to_value_col:
             to_value = st.text_input(
                 "To", key="f_to_value", placeholder="jane.doe@example.com, john.smith@example.org",
@@ -67,11 +67,14 @@ def _build_filters() -> tuple[EventFilters, str]:
     domain_contains = domain_list if domain_operator == "contains" else []
     domain_not_contains = domain_list if domain_operator == "not contains" else []
     # "equals" maps to Mailgun's native `recipient` param (see filters.py) —
-    # only true when the value is used that way, so switching the operator
-    # to "contains" doesn't silently keep sending it server-side. Multiple
-    # "equals" addresses become one native call per address.
+    # only true when the value is used that way, so switching to another
+    # operator doesn't silently keep sending it server-side. Multiple
+    # "equals" addresses become one native call per address; the other
+    # three operators have no native equivalent and are always local.
     to_equals = to_list if to_operator == "equals" else []
+    to_not_equals = to_list if to_operator == "not equals" else []
     to_contains = to_list if to_operator == "contains" else []
+    to_not_contains = to_list if to_operator == "not contains" else []
 
     st.caption("Status & date range")
     tz_options = _timezone_options()
@@ -110,7 +113,9 @@ def _build_filters() -> tuple[EventFilters, str]:
         domain_not_contains=domain_not_contains,
         subject_contains=subject_contains,
         to_equals=to_equals,
+        to_not_equals=to_not_equals,
         to_contains=to_contains,
+        to_not_contains=to_not_contains,
     )
     return spec, tz_name
 

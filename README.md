@@ -47,17 +47,19 @@ client-side against whatever came back:
 |---|---|
 | Status | Mailgun (`event=`) — one call per selected status |
 | Date range | Mailgun (`begin=`/`end=`) |
-| To — equals | Mailgun (`recipient=`, exact match) |
+| To — equals | Mailgun (`recipient=`, exact match) — one call per address |
 | From — equals / not equals | Local, after fetching |
 | Sender domain — contains / not contains | Local, after fetching |
 | Subject contains | Local, after fetching |
-| To — contains | Local, after fetching |
+| To — not equals / contains / not contains | Local, after fetching |
 
 From, Sender domain, and To are each a single value field plus an operator
-dropdown next to it — one field, not a pair of boxes for "equals" and "not
-equals". Only the operator actually chosen determines which underlying
-filter fires; e.g. switching To's operator from "equals" to "contains"
-stops sending `recipient=` server-side and starts filtering locally instead.
+dropdown next to it — one field, not four separate boxes. Only the operator
+actually chosen determines which underlying filter fires; e.g. switching
+To's operator away from "equals" (to "not equals", "contains", or "not
+contains") stops sending `recipient=` server-side and starts filtering
+locally instead — "equals" is the only one of To's four operators Mailgun
+has any native support for.
 
 Each of those three fields also accepts **more than one value** —
 comma-separate them (`alerts@example.com, billing@example.com`) and they're

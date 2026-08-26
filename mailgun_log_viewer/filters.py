@@ -80,10 +80,14 @@ class EventFilters:
 
     # Recipient — `to_equals` maps to Mailgun's native `recipient` param
     # (an exact match, cheap to push server-side, one call per address —
-    # see fetch_filtered_events); `to_contains` has no native equivalent
-    # and is applied client-side, also OR across every value given.
+    # see fetch_filtered_events); the other three have no native equivalent
+    # and are applied client-side, each OR'd across every value given (and
+    # to_not_equals/to_not_contains exclude if *any* value matches, same
+    # "not equal to every one of them" semantics as from_not_equals above).
     to_equals: list[str] = field(default_factory=list)
+    to_not_equals: list[str] = field(default_factory=list)
     to_contains: list[str] = field(default_factory=list)
+    to_not_contains: list[str] = field(default_factory=list)
 
 
 def _native_params(filters: EventFilters, status: str | None, recipient: str | None = None) -> dict[str, Any]:
@@ -132,7 +136,9 @@ def _passes_client_filters(event: dict[str, Any], filters: EventFilters) -> bool
     from_not_equals = {v.strip().lower() for v in filters.from_not_equals if v.strip()}
     domain_contains = [v.strip().lower() for v in filters.domain_contains if v.strip()]
     domain_not_contains = [v.strip().lower() for v in filters.domain_not_contains if v.strip()]
+    to_not_equals = {v.strip().lower() for v in filters.to_not_equals if v.strip()}
     to_contains = [v.strip().lower() for v in filters.to_contains if v.strip()]
+    to_not_contains = [v.strip().lower() for v in filters.to_not_contains if v.strip()]
 
     if from_equals and from_addr not in from_equals:
         return False
@@ -144,7 +150,19 @@ def _passes_client_filters(event: dict[str, Any], filters: EventFilters) -> bool
         return False
     if filters.subject_contains.strip() and filters.subject_contains.strip().lower() not in subject.lower():
         return False
+    # to_equals isn't re-checked here: it's already enforced server-side
+    # (native `recipient=`, one call per address) in live mode and by
+    # _matches_status_and_date in mock mode. to_not_equals has no native
+    # equivalent, so — unlike to_equals — it's only ever enforced here,
+    # against Mailgun's own `recipient` field (the bare address) rather
+    # than the raw `to_header` used below, to match to_equals's exact-match
+    # semantics rather than to_contains's substring-of-header semantics.
+    recipient_addr = str(event.get("recipient") or "").strip().lower()
+    if to_not_equals and recipient_addr in to_not_equals:
+        return False
     if to_contains and not any(v in to_header.lower() for v in to_contains):
+        return False
+    if to_not_contains and any(v in to_header.lower() for v in to_not_contains):
         return False
     return True
 
