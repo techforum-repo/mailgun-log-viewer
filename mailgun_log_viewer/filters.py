@@ -273,16 +273,49 @@ def events_to_dataframe(events: list[dict[str, Any]], columns: list[str]) -> pd.
     return pd.DataFrame([extract_row(e, columns) for e in events], columns=columns)
 
 
-def filter_table(table: pd.DataFrame, query: str) -> pd.DataFrame:
-    """Narrow an already-fetched results table by a plain substring search
-    across every displayed column — deliberately separate from EventFilters
-    above, which controls what gets *fetched*. This runs entirely against
-    data already in memory: no re-fetching from Mailgun, no operator
-    dropdowns, just "does any visible cell in this row contain this text".
-    Case-insensitive. An empty/whitespace-only query returns the table
-    unchanged."""
-    stripped = query.strip().lower()
-    if not stripped or table.empty:
-        return table
-    mask = table.astype(str).apply(lambda col: col.str.lower().str.contains(stripped, regex=False, na=False))
-    return table[mask.any(axis=1)]
+@dataclass
+class ResultFilter:
+    """One row of the Events page's dynamic post-fetch filter builder —
+    narrows an already-fetched results table in memory, never triggers a
+    new Mailgun call. Deliberately separate from EventFilters above, which
+    controls what gets *fetched* in the first place.
+
+    `field` is one of the table's own displayed column names (whatever the
+    Columns picker currently has selected). "@timestamp" is the only
+    genuinely time-based column among filters.COLUMN_OPTIONS's choices, so
+    it's bounded by `begin`/`end` instead of a text match; every other
+    field is a plain case-insensitive substring match against `text`."""
+    field: str
+    text: str = ""
+    begin: datetime | None = None
+    end: datetime | None = None
+
+
+def apply_result_filters(table: pd.DataFrame, result_filters: list[ResultFilter]) -> pd.DataFrame:
+    """Applies every row from the filter builder as an AND — each added
+    filter narrows the table further, same convention as most spreadsheet/
+    table filter UIs. A filter whose field isn't in `table` (the Columns
+    picker was changed after adding it) or whose value is still empty is a
+    silent no-op rather than an error or a table-emptying condition, so an
+    in-progress/stale filter row never surprises with zero rows."""
+    filtered = table
+    for rf in result_filters:
+        if rf.field not in filtered.columns:
+            continue
+        if rf.field == "@timestamp":
+            if rf.begin is None and rf.end is None:
+                continue
+            parsed = pd.to_datetime(filtered[rf.field], errors="coerce", utc=True)
+            mask = pd.Series(True, index=filtered.index)
+            if rf.begin is not None:
+                mask &= parsed >= rf.begin
+            if rf.end is not None:
+                mask &= parsed <= rf.end
+            filtered = filtered[mask.fillna(False)]
+        else:
+            text = rf.text.strip().lower()
+            if not text:
+                continue
+            mask = filtered[rf.field].astype(str).str.lower().str.contains(text, regex=False, na=False)
+            filtered = filtered[mask]
+    return filtered

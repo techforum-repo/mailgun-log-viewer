@@ -3,12 +3,13 @@ from email.utils import format_datetime
 
 from mailgun_log_viewer.filters import (
     EventFilters,
+    ResultFilter,
     _native_params,
     _passes_client_filters,
+    apply_result_filters,
     events_to_dataframe,
     extract_row,
     fetch_mock_events,
-    filter_table,
     format_epoch,
 )
 from mailgun_log_viewer.utils import get_path
@@ -193,34 +194,58 @@ def test_fetch_mock_events_to_equals_multiple_addresses_is_or():
     assert all(e["recipient"] in wanted for e in filtered)
 
 
-def test_filter_table_matches_any_column_case_insensitive():
-    df = events_to_dataframe(
-        [SAMPLE_EVENT, {**SAMPLE_EVENT, "message": {"headers": {"from": "Other <other@spammy.com>", "to": "x@y.com", "subject": "Refund"}}}],
-        ["message.headers.from", "message.headers.subject"],
-    )
-    result = filter_table(df, "INVOICE")
+_OTHER_EVENT = {**SAMPLE_EVENT, "timestamp": 1700010000.0, "message": {"headers": {"from": "Other <other@spammy.com>", "to": "x@y.com", "subject": "Refund"}}}
+
+
+def test_apply_result_filters_text_field_matches_case_insensitive():
+    df = events_to_dataframe([SAMPLE_EVENT, _OTHER_EVENT], ["message.headers.from", "message.headers.subject"])
+    result = apply_result_filters(df, [ResultFilter(field="message.headers.subject", text="INVOICE")])
     assert len(result) == 1
     assert result.iloc[0]["message.headers.subject"] == "Your invoice is ready"
 
 
-def test_filter_table_empty_query_returns_everything_unchanged():
+def test_apply_result_filters_multiple_rows_combine_with_and():
+    df = events_to_dataframe([SAMPLE_EVENT, _OTHER_EVENT], ["message.headers.from", "message.headers.subject"])
+    result = apply_result_filters(
+        df,
+        [ResultFilter(field="message.headers.from", text="acme-mail.com"), ResultFilter(field="message.headers.subject", text="refund")],
+    )
+    assert result.empty  # no row matches both conditions
+
+
+def test_apply_result_filters_empty_text_is_a_noop():
     df = events_to_dataframe([SAMPLE_EVENT], ["message.headers.subject"])
-    result = filter_table(df, "   ")
+    result = apply_result_filters(df, [ResultFilter(field="message.headers.subject", text="  ")])
     assert len(result) == len(df)
 
 
-def test_filter_table_no_match_returns_empty():
+def test_apply_result_filters_unknown_field_is_a_noop():
     df = events_to_dataframe([SAMPLE_EVENT], ["message.headers.subject"])
-    assert filter_table(df, "nonexistent-text").empty
+    result = apply_result_filters(df, [ResultFilter(field="message.headers.to", text="anything")])
+    assert len(result) == len(df)
 
 
-def test_filter_table_preserves_original_index_for_no_matches_case():
+def test_apply_result_filters_timestamp_bounds():
+    df = events_to_dataframe([SAMPLE_EVENT, _OTHER_EVENT], ["@timestamp"])
+    begin = datetime.fromtimestamp(1700005000.0, tz=timezone.utc)
+    result = apply_result_filters(df, [ResultFilter(field="@timestamp", begin=begin)])
+    assert len(result) == 1
+    assert result.iloc[0]["@timestamp"] == format_epoch(1700010000.0)
+
+
+def test_apply_result_filters_timestamp_no_bounds_is_a_noop():
+    df = events_to_dataframe([SAMPLE_EVENT], ["@timestamp"])
+    result = apply_result_filters(df, [ResultFilter(field="@timestamp")])
+    assert len(result) == len(df)
+
+
+def test_apply_result_filters_preserves_original_index():
     """Regression: the Events page uses the surviving index to look up the
-    matching raw event (events[visible_table.index[0]]) — filter_table must
-    mask rows, not reset the index, or that lookup would point at the wrong
-    event."""
+    matching raw event (events[visible_table.index[0]]) — apply_result_filters
+    must mask rows, not reset the index, or that lookup would point at the
+    wrong event."""
     df = events_to_dataframe([SAMPLE_EVENT, SAMPLE_EVENT, SAMPLE_EVENT], ["message.headers.subject"])
-    result = filter_table(df, "invoice")
+    result = apply_result_filters(df, [ResultFilter(field="message.headers.subject", text="invoice")])
     assert list(result.index) == [0, 1, 2]
 
 

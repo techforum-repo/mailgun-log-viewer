@@ -6,7 +6,7 @@ import streamlit as st
 
 from .. import filters as filters_module
 from ..config import LOG_RETENTION_DAYS, settings
-from ..filters import COLUMN_OPTIONS, DEFAULT_COLUMNS, EVENT_TYPES, EventFilters
+from ..filters import COLUMN_OPTIONS, DEFAULT_COLUMNS, EVENT_TYPES, EventFilters, ResultFilter
 from ..utils import local_now, parse_list, run_async, safe_csv, to_utc
 from .shared import fetch_button, query_domains, render_friendly_error
 
@@ -145,6 +145,79 @@ def _do_fetch(domains: list[str], spec: EventFilters) -> None:
         st.session_state["_events_error"] = exc
 
 
+# --- Post-fetch result filter builder ---------------------------------------
+# A dynamically-sized list of filter rows, each identified by a stable id
+# (not its position in the list) so widget keys survive removing an
+# arbitrary row from the middle without colliding with — or losing — the
+# state of the rows that stay. `result_filter_next_id` only ever increments,
+# it's never reused, which is what makes that safe.
+
+def _ensure_result_filter_state() -> None:
+    st.session_state.setdefault("result_filter_ids", [])
+    st.session_state.setdefault("result_filter_next_id", 0)
+
+
+def _add_result_filter() -> None:
+    new_id = st.session_state.result_filter_next_id
+    st.session_state.result_filter_ids.append(new_id)
+    st.session_state.result_filter_next_id += 1
+
+
+def _remove_result_filter(filter_id: int) -> None:
+    st.session_state.result_filter_ids.remove(filter_id)
+    # Drop that row's own widget state too — otherwise a later "+ Add
+    # filter" that happens to land on a fresh id never collides with it,
+    # but the orphaned keys would just sit in session_state doing nothing
+    # useful, and stay there for the rest of the session.
+    for key in (f"rf_field_{filter_id}", f"rf_text_{filter_id}", f"rf_begin_{filter_id}", f"rf_end_{filter_id}"):
+        st.session_state.pop(key, None)
+
+
+def _render_result_filters(available_columns: list[str]) -> list[ResultFilter]:
+    _ensure_result_filter_state()
+    result_filters: list[ResultFilter] = []
+    # Labels are shown only on the first *displayed* row (by position, not
+    # by the row's stable id — an id is never reused, so after removing
+    # row 0 the next row's id would never be 0 again and would wrongly
+    # lose its label if this were keyed off the id instead).
+    for position, filter_id in enumerate(list(st.session_state.result_filter_ids)):
+        is_first_row = position == 0
+        label_visibility = "visible" if is_first_row else "collapsed"
+        field_key = f"rf_field_{filter_id}"
+        # Same defensive pattern as ui/shared.py's domain/timezone
+        # selectors: if this row's field was picked before the Columns
+        # multiselect above dropped it, keep it selectable here rather
+        # than letting the widget error on a stored value that's no
+        # longer a valid option.
+        field_options = list(available_columns)
+        current_field = st.session_state.get(field_key)
+        if current_field and current_field not in field_options:
+            field_options = [current_field, *field_options]
+
+        row_cols = st.columns([2, 3, 3, 1])
+        with row_cols[0]:
+            field = st.selectbox("Field", field_options, key=field_key, label_visibility=label_visibility)
+        if field == "@timestamp":
+            with row_cols[1]:
+                begin_date = st.date_input("From (UTC)", value=None, key=f"rf_begin_{filter_id}", label_visibility=label_visibility)
+            with row_cols[2]:
+                end_date = st.date_input("To (UTC)", value=None, key=f"rf_end_{filter_id}", label_visibility=label_visibility)
+            begin_dt = to_utc(datetime.combine(begin_date, time.min), "UTC") if begin_date else None
+            end_dt = to_utc(datetime.combine(end_date, time.max), "UTC") if end_date else None
+            result_filters.append(ResultFilter(field=field, begin=begin_dt, end=end_dt))
+        else:
+            with row_cols[1]:
+                text = st.text_input("Contains", key=f"rf_text_{filter_id}", placeholder="text to match", label_visibility=label_visibility)
+            result_filters.append(ResultFilter(field=field, text=text))
+        with row_cols[3]:
+            if is_first_row:
+                st.write("")  # vertical spacer so the button lines up with the first row's labeled widgets
+            st.button("✕", key=f"rf_remove_{filter_id}", on_click=_remove_result_filter, args=(filter_id,), help="Remove this filter")
+
+    st.button("+ Add filter", key="rf_add", on_click=_add_result_filter)
+    return result_filters
+
+
 def render() -> None:
     st.markdown("### Events")
     domains = query_domains()
@@ -186,13 +259,12 @@ def render() -> None:
 
     table = filters_module.events_to_dataframe(events, columns or DEFAULT_COLUMNS)
 
-    search = st.text_input(
-        "Search results", key="results_search", placeholder="Type to narrow the table below by any visible text...",
-        help="Filters the already-fetched rows shown below — no new Mailgun call. Matches any of the selected columns, case-insensitive.",
-    )
-    visible_table = filters_module.filter_table(table, search)
-    if search.strip():
-        st.caption(f"{len(visible_table)} of {len(table)} row(s) match \"{search.strip()}\".")
+    st.markdown("##### Filter results")
+    st.caption("Narrows the table below — no new Mailgun call. Every field except @timestamp is a text match; add as many as you need, combined with AND.")
+    result_filters = _render_result_filters(list(table.columns))
+    visible_table = filters_module.apply_result_filters(table, result_filters)
+    if result_filters:
+        st.caption(f"{len(visible_table)} of {len(table)} row(s) match.")
 
     st.dataframe(visible_table, use_container_width=True, hide_index=True)
     st.download_button("Download as CSV", safe_csv(visible_table), "mailgun_events.csv", "text/csv")
@@ -201,9 +273,9 @@ def render() -> None:
         if visible_table.empty:
             st.caption("No visible rows to show.")
         else:
-            # filter_table() only masks rows — it never resets the index —
-            # so the DataFrame's own index still lines up with `events`'
-            # original position, letting this show the same row the table
-            # and search caption above are currently displaying, not always
-            # the pre-search events[0].
+            # apply_result_filters() only masks rows — it never resets the
+            # index — so the DataFrame's own index still lines up with
+            # `events`' original position, letting this show the same row
+            # the table above is currently displaying, not always the
+            # pre-filter events[0].
             st.json(events[visible_table.index[0]], expanded=False)

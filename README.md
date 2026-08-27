@@ -126,20 +126,30 @@ never reads it, so a report built here can show a given event at a
 different clock time than Mailgun's own dashboard does if your account's
 dashboard timezone differs from `REPORT_TIMEZONE`).
 
-## Searching the already-fetched results
+## Filtering the already-fetched results
 
-Above the results table, a **Search results** box narrows the rows shown —
-purely client-side, no new Mailgun call. It's a plain case-insensitive
-substring match against every currently selected column
-(`filters.filter_table()`), meant for quickly eyeballing a fetched batch
-("does anything here mention 'timeout'?") without rebuilding the fetch-time
-filter form above it. The CSV download and the "Raw event" expander both
-follow the search too, so what you export/inspect always matches what's on
-screen.
+Above the results table, a **Filter results** builder narrows the rows
+shown — purely client-side, no new Mailgun call. It's a dynamically-sized
+list of filter rows (`+ Add filter` / `✕` per row), each one picking a
+**Field** from whatever the Columns picker currently has selected and a
+matching condition:
+
+- `@timestamp` — the only genuinely time-based column — gets a From/To date
+  range (UTC, matching how `@timestamp` itself is always displayed)
+  instead of a text box.
+- Every other field is a plain case-insensitive substring match.
+
+Multiple filter rows combine with **AND** — each one narrows the table
+further, the same convention as most spreadsheet/table filter UIs
+(`filters.apply_result_filters()`). A row whose field fell out of the
+Columns picker, or whose value is still empty, is a silent no-op rather
+than an error or an unexpectedly empty table. The CSV download and the
+"Raw event" expander both follow the filtered table too, so what you
+export/inspect always matches what's on screen.
 
 This is deliberately separate from (and doesn't replace) the Filters
 section above it — that section controls what gets *fetched* from Mailgun
-in the first place; this search only ever narrows what's already in memory.
+in the first place; this one only ever narrows what's already in memory.
 
 ## Every configured domain is queried together
 
@@ -185,7 +195,7 @@ mailgun_log_viewer/
   errors.py        friendly_error() — exception -> title + plausible causes
   retry.py         call_with_retry() — retries only what friendly_error() says is transient
   logging_setup.py Rotating file logger under logs/ (Streamlit only prints to stdout)
-  filters.py       EventFilters (multi-value OR filters), native-vs-local query splitting, column extraction, filter_table()
+  filters.py       EventFilters (multi-value OR filters), native-vs-local query splitting, column extraction, ResultFilter/apply_result_filters()
   utils.py         to_utc()/local_now() (zoneinfo-based timezone conversion), parse_list(), CSV/log sanitization
   clients/
     base.py        Shared HTTP plumbing: request pacing, error normalization
