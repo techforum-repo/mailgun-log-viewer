@@ -1,3 +1,5 @@
+> **This repository has moved.** It now lives in [`martech-architect-toolkit/mailgun-log-viewer`](https://github.com/techforum-repo/martech-architect-toolkit/tree/main/mailgun-log-viewer), with its full commit history. This repo is archived and read-only.
+
 # Mailgun Log Viewer
 
 A small Streamlit app for querying Mailgun's [Events API](https://documentation.mailgun.com/en/latest/api-events.html)
